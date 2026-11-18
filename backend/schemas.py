@@ -55,7 +55,16 @@ class DocUpdateRequestCreate(BaseModel):
     tier: DocTier = "trung_uong"
     department_id: DepartmentId = "VP"
     reason: str = Field(..., min_length=3, max_length=2000)
-    requested_by: str = Field(default="tsh.co@tshorg.vn", max_length=200)
+    requested_by: str = Field(default="", max_length=200)
+
+
+class DocUpdateReviewRequest(BaseModel):
+    status: Literal["da_duyet", "tu_choi"]
+    issuer: str = Field(default="Cơ quan nhà nước có thẩm quyền", max_length=200)
+    issued_date: str = Field(default="2026-11-18", max_length=32)
+    doc_type: str = Field(default="Văn bản pháp quy", max_length=100)
+    summary: str = Field(default="", max_length=2000)
+    content: str = Field(default="", max_length=50000)
 
 
 class ProcessSessionRequest(BaseModel):

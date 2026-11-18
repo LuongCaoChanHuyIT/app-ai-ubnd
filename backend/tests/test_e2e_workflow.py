@@ -13,8 +13,8 @@ class FullSevenModuleWorkflowTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         os.environ["UBND_DB_PATH"] = str(Path(self.tmp.name) / "e2e.db")
         init_db()
-        self.client = TestClient(app)
         self.owner = {"X-Actor-Email": "tsh.co@tshorg.vn"}
+        self.client = TestClient(app, headers=self.owner)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()

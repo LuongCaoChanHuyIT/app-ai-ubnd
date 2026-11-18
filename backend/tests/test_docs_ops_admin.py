@@ -14,7 +14,7 @@ class DocsOpsAdminTests(unittest.TestCase):
         self.base_dir = Path(self.tmp.name)
         os.environ["UBND_DB_PATH"] = str(self.base_dir / "main.db")
         init_db()
-        self.client = TestClient(app)
+        self.client = TestClient(app, headers={"X-Actor-Email": "tsh.co@tshorg.vn"})
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -73,6 +73,7 @@ class DocsOpsAdminTests(unittest.TestCase):
 
         up1 = self.client.post(
             "/api/m05/sessions/s-up/upload",
+            params={"department_id": "NNMT"},
             files={
                 "file": (
                     "don_de_nghi.txt",
@@ -84,6 +85,7 @@ class DocsOpsAdminTests(unittest.TestCase):
         self.assertEqual(up1.status_code, 200)
         up2 = self.client.post(
             "/api/m05/sessions/s-up/upload",
+            params={"department_id": "NNMT"},
             files={
                 "file": (
                     "bien_ban.txt",
@@ -211,7 +213,8 @@ class DocsOpsAdminTests(unittest.TestCase):
         )
         self.assertEqual(res1.status_code, 200)
         self.assertEqual(res1.json()["slug"], "ubnd-phuong-ben-nghe")
-        self.assertTrue(Path(res1.json()["db_path"]).exists())
+        self.assertEqual(res1.json()["storage_label"], "tenants/ubnd-phuong-ben-nghe.db")
+        self.assertTrue((self.base_dir / "tenants" / "ubnd-phuong-ben-nghe.db").exists())
 
         dup = self.client.post(
             "/api/m07/clone-tenant",

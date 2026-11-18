@@ -4,8 +4,14 @@ import re
 import unicodedata
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.auth import (
+    ActorContext,
+    enforce_dept_scope,
+    get_actor,
+    require_owner_actor,
+)
 from backend.db import get_conn, get_db_path, init_db, log_audit, utc_now_iso
 from backend.schemas import (
     CloneTenantRequest,
@@ -29,7 +35,6 @@ def mask_secret(secret: str) -> str:
 
 
 def slugify_commune(name: str) -> str:
-    # Strip any path traversal prefixes/components and normalize Vietnamese diacritics
     cleaned = name.replace("..", " ").replace("/", " ").replace("\\", " ")
     cleaned = cleaned.replace("đ", "d").replace("Đ", "D")
     normalized = unicodedata.normalize("NFKD", cleaned)
@@ -37,62 +42,80 @@ def slugify_commune(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_only.lower()).strip("-")
     slug = slug[:80].rstrip("-")
     if not slug:
-        raise HTTPException(status_code=400, detail="Tên xã/phường không hợp lệ để tạo mã định danh.")
+        raise HTTPException(
+            status_code=400, detail="Tên xã/phường không hợp lệ để tạo mã định danh."
+        )
     return slug
 
 
-def require_owner(actor_email: str) -> dict[str, Any]:
-    email = (actor_email or "").strip().lower()
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM users_rbac WHERE lower(email) = ? AND active = 1",
-            (email,),
-        ).fetchone()
-        if not row or row["role"] != "owner":
-            raise HTTPException(
-                status_code=403,
-                detail="Chỉ tài khoản Chủ sở hữu hệ thống (owner) mới có quyền thực hiện thao tác quản trị này.",
-            )
-        return dict(row)
+def _sanitize_tenant_row(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    out.pop("db_path", None)
+    out["storage_label"] = f"tenants/{out['slug']}.db"
+    return out
 
 
 @router.get("/m06/tasks")
 def list_tasks(
     department_id: str | None = Query(default=None),
     status: str | None = Query(default=None),
+    actor: ActorContext = Depends(get_actor),
 ) -> dict[str, Any]:
-    with get_conn() as conn:
-        all_rows = [
-            dict(r)
-            for r in conn.execute("SELECT * FROM tasks ORDER BY id DESC").fetchall()
-        ]
+    if actor.role != "owner":
+        if department_id and department_id.upper() not in {"ALL", actor.department_id}:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Tài khoản cán bộ phòng {actor.department_id} chỉ được xem nhiệm vụ thuộc phòng {actor.department_id}.",
+            )
+        effective_dept: str | None = actor.department_id
+    else:
+        effective_dept = (
+            department_id.upper()
+            if department_id and department_id.upper() in {"VP", "KT", "VHXH", "NNMT"}
+            else None
+        )
+
+    with get_conn(actor.db_path) as conn:
         sql = "SELECT * FROM tasks WHERE 1=1"
         params: list[Any] = []
-        if department_id and department_id in {"VP", "KT", "VHXH", "NNMT"}:
+        if effective_dept:
             sql += " AND department_id = ?"
-            params.append(department_id)
-        if status and status in {"cho_xu_ly", "dang_thuc_hien", "sap_den_han", "hoan_thanh"}:
+            params.append(effective_dept)
+        if status and status in {
+            "cho_xu_ly",
+            "dang_thuc_hien",
+            "sap_den_han",
+            "hoan_thanh",
+        }:
             sql += " AND status = ?"
             params.append(status)
         sql += " ORDER BY id DESC"
         filtered = [dict(r) for r in conn.execute(sql, params).fetchall()]
 
+    # KPIs match the exact filtered dataset displayed on screen
     kpis = {
-        "total": len(all_rows),
-        "in_progress": sum(1 for t in all_rows if t["status"] in {"cho_xu_ly", "dang_thuc_hien"}),
-        "due_soon": sum(1 for t in all_rows if t["status"] == "sap_den_han"),
-        "completed": sum(1 for t in all_rows if t["status"] == "hoan_thanh"),
+        "total": len(filtered),
+        "in_progress": sum(
+            1 for t in filtered if t["status"] in {"cho_xu_ly", "dang_thuc_hien"}
+        ),
+        "due_soon": sum(1 for t in filtered if t["status"] == "sap_den_han"),
+        "completed": sum(1 for t in filtered if t["status"] == "hoan_thanh"),
     }
-    return {"kpis": kpis, "tasks": filtered}
+    return {
+        "kpis": kpis,
+        "tasks": filtered,
+        "effective_department": effective_dept or "ALL",
+    }
 
 
 @router.post("/m06/tasks")
 def create_task(
     req: TaskCreateRequest,
-    x_actor_email: str = Header(default="tsh.co@tshorg.vn"),
+    actor: ActorContext = Depends(get_actor),
 ) -> dict[str, Any]:
+    enforce_dept_scope(actor, req.department_id)
     now = utc_now_iso()
-    with get_conn() as conn:
+    with get_conn(actor.db_path) as conn:
         cur = conn.execute(
             """
             INSERT INTO tasks(
@@ -117,11 +140,12 @@ def create_task(
         row = dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (tid,)).fetchone())
 
     log_audit(
-        actor_email=x_actor_email,
+        actor_email=actor.email,
         department_id=req.department_id,
         module_code="M06",
         action="CREATE_TASK",
         detail=f"Giao nhiệm vụ '{req.title[:70]}' cho {req.assignee}",
+        db_path=actor.db_path,
     )
     return row
 
@@ -130,12 +154,16 @@ def create_task(
 def patch_task(
     task_id: int,
     req: TaskPatchRequest,
-    x_actor_email: str = Header(default="tsh.co@tshorg.vn"),
+    actor: ActorContext = Depends(get_actor),
 ) -> dict[str, Any]:
-    with get_conn() as conn:
-        existing = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    with get_conn(actor.db_path) as conn:
+        existing = conn.execute(
+            "SELECT * FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="Không tìm thấy nhiệm vụ.")
+
+        enforce_dept_scope(actor, existing["department_id"])
 
         progress = req.progress if req.progress is not None else existing["progress"]
         status = req.status if req.status is not None else existing["status"]
@@ -152,22 +180,27 @@ def patch_task(
             (progress, status, reminder_count, utc_now_iso(), task_id),
         )
         conn.commit()
-        updated = dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
+        updated = dict(
+            conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        )
 
     action_code = "REMIND_TASK" if req.remind else "UPDATE_TASK"
     log_audit(
-        actor_email=x_actor_email,
+        actor_email=actor.email,
         department_id=updated["department_id"],
         module_code="M06",
         action=action_code,
         detail=f"Cập nhật nhiệm vụ #{task_id} ({updated['progress']}%, trạng thái {updated['status']})",
+        db_path=actor.db_path,
     )
     return updated
 
 
 @router.get("/m07/users")
-def list_rbac_users() -> dict[str, Any]:
-    with get_conn() as conn:
+def list_rbac_users(
+    actor: ActorContext = Depends(require_owner_actor),
+) -> dict[str, Any]:
+    with get_conn(actor.db_path) as conn:
         rows = [
             dict(r)
             for r in conn.execute("SELECT * FROM users_rbac ORDER BY id ASC").fetchall()
@@ -181,17 +214,18 @@ def list_rbac_users() -> dict[str, Any]:
 @router.post("/m07/users")
 def create_rbac_user(
     req: UserCreateRequest,
-    x_actor_email: str = Header(default=""),
+    actor: ActorContext = Depends(require_owner_actor),
 ) -> dict[str, Any]:
-    require_owner(x_actor_email)
     now = utc_now_iso()
     email = req.email.strip().lower()
-    with get_conn() as conn:
+    with get_conn(actor.db_path) as conn:
         dup = conn.execute(
             "SELECT id FROM users_rbac WHERE lower(email) = ?", (email,)
         ).fetchone()
         if dup:
-            raise HTTPException(status_code=409, detail="Email cán bộ này đã tồn tại trong hệ thống.")
+            raise HTTPException(
+                status_code=409, detail="Email cán bộ này đã tồn tại trong hệ thống."
+            )
         cur = conn.execute(
             """
             INSERT INTO users_rbac(
@@ -210,16 +244,19 @@ def create_rbac_user(
         )
         uid = cur.lastrowid
         conn.commit()
-        row = dict(conn.execute("SELECT * FROM users_rbac WHERE id = ?", (uid,)).fetchone())
+        row = dict(
+            conn.execute("SELECT * FROM users_rbac WHERE id = ?", (uid,)).fetchone()
+        )
         row["private_repo_access"] = bool(row["private_repo_access"])
         row["active"] = bool(row["active"])
 
     log_audit(
-        actor_email=x_actor_email,
+        actor_email=actor.email,
         department_id=req.department_id,
         module_code="M07",
         action="ADD_USER_RBAC",
         detail=f"Phân quyền email {email} vào nhóm {req.department_id} ({req.role})",
+        db_path=actor.db_path,
     )
     return row
 
@@ -227,11 +264,12 @@ def create_rbac_user(
 @router.delete("/m07/users/{user_id}")
 def delete_rbac_user(
     user_id: int,
-    x_actor_email: str = Header(default=""),
+    actor: ActorContext = Depends(require_owner_actor),
 ) -> dict[str, Any]:
-    require_owner(x_actor_email)
-    with get_conn() as conn:
-        target = conn.execute("SELECT * FROM users_rbac WHERE id = ?", (user_id,)).fetchone()
+    with get_conn(actor.db_path) as conn:
+        target = conn.execute(
+            "SELECT * FROM users_rbac WHERE id = ?", (user_id,)
+        ).fetchone()
         if not target:
             raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản.")
         if target["role"] == "owner":
@@ -247,11 +285,12 @@ def delete_rbac_user(
         conn.commit()
 
     log_audit(
-        actor_email=x_actor_email,
+        actor_email=actor.email,
         department_id=target["department_id"],
         module_code="M07",
         action="REMOVE_USER_RBAC",
         detail=f"Thu hồi quyền truy cập của {target['email']}",
+        db_path=actor.db_path,
     )
     return {"deleted": True, "id": user_id}
 
@@ -260,36 +299,46 @@ def delete_rbac_user(
 def update_department_instruction(
     dept_id: str,
     req: InstructionUpdateRequest,
-    x_actor_email: str = Header(default=""),
+    actor: ActorContext = Depends(require_owner_actor),
 ) -> dict[str, Any]:
-    require_owner(x_actor_email)
-    with get_conn() as conn:
-        existing = conn.execute("SELECT * FROM departments WHERE id = ?", (dept_id,)).fetchone()
+    with get_conn(actor.db_path) as conn:
+        existing = conn.execute(
+            "SELECT * FROM departments WHERE id = ?", (dept_id,)
+        ).fetchone()
         if not existing:
-            raise HTTPException(status_code=404, detail="Không tìm thấy phòng chuyên môn.")
+            raise HTTPException(
+                status_code=404, detail="Không tìm thấy phòng chuyên môn."
+            )
         conn.execute(
             "UPDATE departments SET instruction = ?, updated_at = ? WHERE id = ?",
             (req.instruction.strip(), utc_now_iso(), dept_id),
         )
         conn.commit()
-        updated = dict(conn.execute("SELECT * FROM departments WHERE id = ?", (dept_id,)).fetchone())
+        updated = dict(
+            conn.execute("SELECT * FROM departments WHERE id = ?", (dept_id,)).fetchone()
+        )
 
     log_audit(
-        actor_email=x_actor_email,
+        actor_email=actor.email,
         department_id=dept_id,
         module_code="M07",
         action="UPDATE_INSTRUCTION",
         detail=f"Cập nhật Instruction nghiệp vụ của {updated['name']}",
+        db_path=actor.db_path,
     )
     return updated
 
 
 @router.get("/m07/api-connectors")
-def list_api_connectors() -> dict[str, Any]:
-    with get_conn() as conn:
+def list_api_connectors(
+    actor: ActorContext = Depends(require_owner_actor),
+) -> dict[str, Any]:
+    with get_conn(actor.db_path) as conn:
         rows = [
             dict(r)
-            for r in conn.execute("SELECT * FROM api_connectors ORDER BY id ASC").fetchall()
+            for r in conn.execute(
+                "SELECT * FROM api_connectors ORDER BY id ASC"
+            ).fetchall()
         ]
     sanitized: list[dict[str, Any]] = []
     for r in rows:
@@ -305,10 +354,9 @@ def list_api_connectors() -> dict[str, Any]:
 def update_api_connector(
     connector_id: int,
     req: ConnectorUpdateRequest,
-    x_actor_email: str = Header(default=""),
+    actor: ActorContext = Depends(require_owner_actor),
 ) -> dict[str, Any]:
-    require_owner(x_actor_email)
-    with get_conn() as conn:
+    with get_conn(actor.db_path) as conn:
         existing = conn.execute(
             "SELECT * FROM api_connectors WHERE id = ?", (connector_id,)
         ).fetchone()
@@ -339,7 +387,9 @@ def update_api_connector(
         )
         conn.commit()
         updated = dict(
-            conn.execute("SELECT * FROM api_connectors WHERE id = ?", (connector_id,)).fetchone()
+            conn.execute(
+                "SELECT * FROM api_connectors WHERE id = ?", (connector_id,)
+            ).fetchone()
         )
 
     raw_key = updated.pop("api_key", "")
@@ -348,18 +398,22 @@ def update_api_connector(
     updated["active"] = bool(updated["active"])
 
     log_audit(
-        actor_email=x_actor_email,
+        actor_email=actor.email,
         department_id="VP",
         module_code="M07",
         action="UPDATE_API_CONNECTOR",
         detail=f"Cập nhật cổng API '{updated['name']}' (active={updated['active']})",
+        db_path=actor.db_path,
     )
     return updated
 
 
 @router.get("/m07/audit-logs")
-def list_audit_logs(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
-    with get_conn() as conn:
+def list_audit_logs(
+    limit: int = Query(default=50, ge=1, le=200),
+    actor: ActorContext = Depends(require_owner_actor),
+) -> dict[str, Any]:
+    with get_conn(actor.db_path) as conn:
         rows = [
             dict(r)
             for r in conn.execute(
@@ -370,11 +424,16 @@ def list_audit_logs(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, A
 
 
 @router.get("/m07/tenants")
-def list_cloned_tenants() -> dict[str, Any]:
-    with get_conn() as conn:
+def list_cloned_tenants(
+    _actor: ActorContext = Depends(require_owner_actor),
+) -> dict[str, Any]:
+    root_db = get_db_path()
+    with get_conn(root_db) as conn:
         rows = [
-            dict(r)
-            for r in conn.execute("SELECT * FROM cloned_tenants ORDER BY id DESC").fetchall()
+            _sanitize_tenant_row(dict(r))
+            for r in conn.execute(
+                "SELECT * FROM cloned_tenants ORDER BY id DESC"
+            ).fetchall()
         ]
     return {"tenants": rows}
 
@@ -382,18 +441,20 @@ def list_cloned_tenants() -> dict[str, Any]:
 @router.post("/m07/clone-tenant")
 def clone_commune_tenant(
     req: CloneTenantRequest,
-    x_actor_email: str = Header(default=""),
+    actor: ActorContext = Depends(require_owner_actor),
 ) -> dict[str, Any]:
-    require_owner(x_actor_email)
     slug = slugify_commune(req.commune_name)
-    tenants_dir = (get_db_path().parent / "tenants").resolve()
+    root_db = get_db_path()
+    tenants_dir = (root_db.parent / "tenants").resolve()
     tenants_dir.mkdir(parents=True, exist_ok=True)
     target_db = (tenants_dir / f"{slug}.db").resolve()
 
     if target_db.parent != tenants_dir:
-        raise HTTPException(status_code=400, detail="Đường dẫn định danh không hợp lệ.")
+        raise HTTPException(
+            status_code=400, detail="Đường dẫn định danh không hợp lệ."
+        )
 
-    with get_conn() as conn:
+    with get_conn(root_db) as conn:
         existing = conn.execute(
             "SELECT id FROM cloned_tenants WHERE slug = ?", (slug,)
         ).fetchone()
@@ -431,15 +492,17 @@ def clone_commune_tenant(
             raise
 
         created = dict(
-            conn.execute("SELECT * FROM cloned_tenants WHERE id = ?", (tid,)).fetchone()
+            conn.execute(
+                "SELECT * FROM cloned_tenants WHERE id = ?", (tid,)
+            ).fetchone()
         )
 
     log_audit(
-        actor_email=x_actor_email,
+        actor_email=actor.email,
         department_id="VP",
         module_code="M07",
         action="CLONE_TENANT",
         detail=f"Nhân bản hệ thống AI độc lập cho '{req.commune_name.strip()}' ({slug})",
+        db_path=actor.db_path,
     )
-    return created
-
+    return _sanitize_tenant_row(created)

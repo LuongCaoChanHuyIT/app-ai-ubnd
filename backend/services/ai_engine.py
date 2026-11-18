@@ -154,11 +154,17 @@ def run_assistant_turn(
     department_id: str,
     mode: str,
     message: str,
-    actor_email: str = "tsh.co@tshorg.vn",
+    actor_email: str,
+    tenant_slug: str = "default",
     db_path: Path | str | None = None,
 ) -> dict[str, Any]:
     dept = get_department_info(department_id, db_path)
-    session_state = SESSION_STORE.get_or_create(session_id)
+    session_state = SESSION_STORE.get_or_create(
+        session_id,
+        tenant_slug=tenant_slug,
+        actor_email=actor_email,
+        department_id=department_id,
+    )
     session_files = session_state["files"]
 
     allow_private = can_access_private_docs(actor_email, department_id, db_path)
@@ -191,6 +197,9 @@ def run_assistant_turn(
             "citations": [],
             "created_at": utc_now_iso(),
         },
+        tenant_slug=tenant_slug,
+        actor_email=actor_email,
+        department_id=department_id,
     )
 
     files_snippet = ""
@@ -291,7 +300,13 @@ def run_assistant_turn(
         "citations": citations,
         "created_at": utc_now_iso(),
     }
-    updated = SESSION_STORE.append_message(session_id, reply_msg)
+    updated = SESSION_STORE.append_message(
+        session_id,
+        reply_msg,
+        tenant_slug=tenant_slug,
+        actor_email=actor_email,
+        department_id=department_id,
+    )
     return {
         "session_id": session_id,
         "department": dept,
@@ -580,10 +595,17 @@ def process_session_files(
     session_id: str,
     department_id: str,
     action: str,
+    actor_email: str = "local",
+    tenant_slug: str = "default",
     db_path: Path | str | None = None,
 ) -> dict[str, Any]:
     dept = get_department_info(department_id, db_path)
-    state = SESSION_STORE.get_or_create(session_id)
+    state = SESSION_STORE.get_or_create(
+        session_id,
+        tenant_slug=tenant_slug,
+        actor_email=actor_email,
+        department_id=department_id,
+    )
     files = state["files"]
 
     if not files:

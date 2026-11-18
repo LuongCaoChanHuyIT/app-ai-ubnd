@@ -21,23 +21,21 @@ class SecurityAndReviewFixesTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_cross_department_officer_cannot_read_or_write_other_dept_private_docs(self) -> None:
-        # KT officer attempting to read VP documents must NOT see VP's kho_rieng
+        # KT officer attempting to read VP documents is strictly blocked with 403
         res = self.client.get(
             "/api/m04/documents",
             params={"department_id": "VP"},
             headers=self.kt_officer,
         )
-        self.assertEqual(res.status_code, 200)
-        docs = res.json()["documents"]
-        self.assertFalse(any(d["tier"] == "kho_rieng" for d in docs))
+        self.assertEqual(res.status_code, 403)
 
-        # Unknown/headerless caller must also NOT see kho_rieng
-        anon_docs = self.client.get(
+        # Unknown caller is also rejected with 403
+        anon_res = self.client.get(
             "/api/m04/documents",
             params={"department_id": "VP"},
             headers={"X-Actor-Email": "stranger@example.com"},
-        ).json()["documents"]
-        self.assertFalse(any(d["tier"] == "kho_rieng" for d in anon_docs))
+        )
+        self.assertEqual(anon_res.status_code, 403)
 
         # KT officer attempting to create a kho_rieng doc inside VP must get 403
         forbid_write = self.client.post(
@@ -75,8 +73,8 @@ class SecurityAndReviewFixesTests(unittest.TestCase):
         )
         self.assertEqual(allow_own.status_code, 200)
 
-    def test_headerless_m07_mutations_fail_with_403_and_short_secrets_are_masked(self) -> None:
-        # Headerless POST /api/m07/users must fail 403 (not default to owner!)
+    def test_headerless_m07_mutations_fail_with_401_and_short_secrets_are_masked(self) -> None:
+        # Headerless POST /api/m07/users must fail 401 (Zero-Trust: no default owner!)
         no_header = self.client.post(
             "/api/m07/users",
             json={
@@ -88,10 +86,10 @@ class SecurityAndReviewFixesTests(unittest.TestCase):
                 "private_repo_access": True,
             },
         )
-        self.assertEqual(no_header.status_code, 403)
+        self.assertEqual(no_header.status_code, 401)
 
         # 7-character secret must never leak plaintext prefix+suffix
-        cid = self.client.get("/api/m07/api-connectors").json()["connectors"][0]["id"]
+        cid = self.client.get("/api/m07/api-connectors", headers=self.owner).json()["connectors"][0]["id"]
         self.client.put(
             f"/api/m07/api-connectors/{cid}",
             headers=self.owner,
@@ -104,7 +102,7 @@ class SecurityAndReviewFixesTests(unittest.TestCase):
                 "active": False,
             },
         )
-        masked = self.client.get("/api/m07/api-connectors").json()["connectors"][0][
+        masked = self.client.get("/api/m07/api-connectors", headers=self.owner).json()["connectors"][0][
             "api_key_masked"
         ]
         self.assertEqual(masked, "***")

@@ -36,6 +36,11 @@ def get_conn(db_path: Path | str | None = None) -> Iterator[sqlite3.Connection]:
 
 
 SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS tenant_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS departments (
     id TEXT PRIMARY KEY,
     code TEXT NOT NULL,
@@ -134,12 +139,20 @@ CREATE TABLE IF NOT EXISTS cloned_tenants (
 
 def init_db(
     db_path: Path | str | None = None,
-    commune_name: str = "UBND Xã/Phường Trung Tâm",
+    commune_name: str = "UBND Phường Trung Tâm",
     owner_email: str = "tsh.co@tshorg.vn",
 ) -> None:
     now = utc_now_iso()
     with get_conn(db_path) as conn:
         conn.executescript(SCHEMA_SQL)
+        existing_meta = conn.execute(
+            "SELECT value FROM tenant_meta WHERE key = 'commune_name'"
+        ).fetchone()
+        if not existing_meta:
+            conn.execute(
+                "INSERT INTO tenant_meta(key, value) VALUES ('commune_name', ?)",
+                (commune_name.strip(),),
+            )
 
         dept_count = conn.execute("SELECT COUNT(*) AS c FROM departments").fetchone()["c"]
         if dept_count == 0:
@@ -380,9 +393,13 @@ def init_db(
                 ("canbo.nnmt@ubnd.vn", "Phạm Quốc Bảo", "Công chức Địa chính - Môi trường", "officer", "NNMT", 1, 1, now),
             ]
             users = [
-                (owner_clean, "Quản trị viên Hệ thống (TSH)", "Chủ sở hữu hệ thống", "owner", "VP", 1, 1, now),
-                *[u for u in default_officers if u[0].lower() != owner_clean],
+                (owner_clean, f"Chủ sở hữu ({commune_name})", "Chủ sở hữu hệ thống", "owner", "VP", 1, 1, now),
             ]
+            if owner_clean != "tsh.co@tshorg.vn":
+                users.append(
+                    ("tsh.co@tshorg.vn", "Quản trị viên Hệ thống (TSH)", "Chủ sở hữu nền tảng", "owner", "VP", 1, 1, now)
+                )
+            users.extend([u for u in default_officers if u[0].lower() not in {owner_clean, "tsh.co@tshorg.vn"}])
             conn.executemany(
                 """
                 INSERT INTO users_rbac(
@@ -412,6 +429,19 @@ def init_db(
             )
 
         conn.commit()
+
+
+def get_commune_name(db_path: Path | str | None = None) -> str:
+    with get_conn(db_path) as conn:
+        try:
+            row = conn.execute(
+                "SELECT value FROM tenant_meta WHERE key = 'commune_name'"
+            ).fetchone()
+            if row and row["value"]:
+                return str(row["value"])
+        except sqlite3.OperationalError:
+            pass
+    return "UBND Phường Trung Tâm"
 
 
 def can_access_private_docs(
@@ -454,57 +484,126 @@ def log_audit(
 
 
 class EphemeralSessionStore:
-    """In-memory session store ensuring session files and chat never touch disk."""
+    """In-memory session store isolated by (tenant_slug, actor_email, department_id, session_id)."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._sessions: dict[str, dict[str, Any]] = {}
 
-    def get_or_create(self, session_id: str) -> dict[str, Any]:
+    @staticmethod
+    def _compose_key(
+        session_id: str,
+        tenant_slug: str = "default",
+        actor_email: str = "local",
+        department_id: str = "VP",
+    ) -> str:
+        return (
+            f"{(tenant_slug or 'default').strip().lower()}"
+            f"::{(actor_email or 'local').strip().lower()}"
+            f"::{(department_id or 'VP').strip().upper()}"
+            f"::{session_id}"
+        )
+
+    def get_or_create(
+        self,
+        session_id: str,
+        *,
+        tenant_slug: str = "default",
+        actor_email: str = "local",
+        department_id: str = "VP",
+    ) -> dict[str, Any]:
+        key = self._compose_key(session_id, tenant_slug, actor_email, department_id)
         with self._lock:
-            if session_id not in self._sessions:
-                self._sessions[session_id] = {
+            if key not in self._sessions:
+                self._sessions[key] = {
                     "session_id": session_id,
+                    "tenant_slug": tenant_slug,
+                    "actor_email": actor_email.lower(),
+                    "department_id": department_id.upper(),
                     "created_at": utc_now_iso(),
                     "files": [],
                     "messages": [],
                 }
-            state = self._sessions[session_id]
+            state = self._sessions[key]
             return {
                 "session_id": state["session_id"],
+                "tenant_slug": state["tenant_slug"],
+                "department_id": state["department_id"],
                 "created_at": state["created_at"],
                 "files": list(state["files"]),
                 "messages": list(state["messages"]),
             }
 
-    def add_file(self, session_id: str, record: dict[str, Any]) -> dict[str, Any]:
+    def add_file(
+        self,
+        session_id: str,
+        record: dict[str, Any],
+        *,
+        tenant_slug: str = "default",
+        actor_email: str = "local",
+        department_id: str = "VP",
+    ) -> dict[str, Any]:
+        key = self._compose_key(session_id, tenant_slug, actor_email, department_id)
         with self._lock:
-            if session_id not in self._sessions:
-                self._sessions[session_id] = {
+            if key not in self._sessions:
+                self._sessions[key] = {
                     "session_id": session_id,
+                    "tenant_slug": tenant_slug,
+                    "actor_email": actor_email.lower(),
+                    "department_id": department_id.upper(),
                     "created_at": utc_now_iso(),
                     "files": [],
                     "messages": [],
                 }
-            self._sessions[session_id]["files"].append(dict(record))
-        return self.get_or_create(session_id)
+            self._sessions[key]["files"].append(dict(record))
+        return self.get_or_create(
+            session_id,
+            tenant_slug=tenant_slug,
+            actor_email=actor_email,
+            department_id=department_id,
+        )
 
-    def append_message(self, session_id: str, msg: dict[str, Any]) -> dict[str, Any]:
+    def append_message(
+        self,
+        session_id: str,
+        msg: dict[str, Any],
+        *,
+        tenant_slug: str = "default",
+        actor_email: str = "local",
+        department_id: str = "VP",
+    ) -> dict[str, Any]:
+        key = self._compose_key(session_id, tenant_slug, actor_email, department_id)
         with self._lock:
-            if session_id not in self._sessions:
-                self._sessions[session_id] = {
+            if key not in self._sessions:
+                self._sessions[key] = {
                     "session_id": session_id,
+                    "tenant_slug": tenant_slug,
+                    "actor_email": actor_email.lower(),
+                    "department_id": department_id.upper(),
                     "created_at": utc_now_iso(),
                     "files": [],
                     "messages": [],
                 }
-            self._sessions[session_id]["messages"].append(dict(msg))
-        return self.get_or_create(session_id)
+            self._sessions[key]["messages"].append(dict(msg))
+        return self.get_or_create(
+            session_id,
+            tenant_slug=tenant_slug,
+            actor_email=actor_email,
+            department_id=department_id,
+        )
 
-    def wipe(self, session_id: str) -> bool:
+    def wipe(
+        self,
+        session_id: str,
+        *,
+        tenant_slug: str = "default",
+        actor_email: str = "local",
+        department_id: str = "VP",
+    ) -> bool:
+        key = self._compose_key(session_id, tenant_slug, actor_email, department_id)
         with self._lock:
-            existed = session_id in self._sessions
-            self._sessions.pop(session_id, None)
+            existed = key in self._sessions
+            self._sessions.pop(key, None)
             return existed
 
 

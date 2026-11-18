@@ -26,7 +26,7 @@ class AiAndAuthoringTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         os.environ["UBND_DB_PATH"] = str(Path(self.tmp.name) / "test.db")
         init_db()
-        self.client = TestClient(app)
+        self.client = TestClient(app, headers={"X-Actor-Email": "tsh.co@tshorg.vn"})
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
