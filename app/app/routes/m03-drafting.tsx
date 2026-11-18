@@ -38,7 +38,7 @@ import {
 import { Textarea } from "~/components/ui/textarea";
 import { cn } from "~/lib/utils";
 
-export function meta({}: Route.MetaArgs) {
+export function meta({ }: Route.MetaArgs) {
   return [{ title: "Mô-đun 03 · Soạn thảo & Kiểm tra văn bản — UBND Xã, Phường" }];
 }
 
@@ -51,11 +51,11 @@ export default function Module03DraftingRoute() {
   );
   const [title, setTitle] = useState<string>(
     searchParams.get("title") ??
-      "Triển khai chuẩn hóa giải quyết thủ tục hành chính quý IV/2026",
+    "Triển khai chuẩn hóa giải quyết thủ tục hành chính quý IV/2026",
   );
   const [keyPoints, setKeyPoints] = useState<string>(
     searchParams.get("points") ??
-      "Rà soát quy trình tiếp nhận hồ sơ tại Bộ phận Một cửa; Tăng cường số hóa hồ sơ theo Nghị định 399/2026/NĐ-CP; Phân công rõ đầu mối phụ trách từng lĩnh vực",
+    "Rà soát quy trình tiếp nhận hồ sơ tại Bộ phận Một cửa; Tăng cường số hóa hồ sơ theo Nghị định 399/2026/NĐ-CP; Phân công rõ đầu mối phụ trách từng lĩnh vực",
   );
   const [draftText, setDraftText] = useState<string>("");
   const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
@@ -350,8 +350,8 @@ export default function Module03DraftingRoute() {
                             isPass && "border-emerald-300 text-emerald-700 bg-white",
                             isWarn && "border-amber-300 text-amber-700 bg-white",
                             !isPass &&
-                              !isWarn &&
-                              "border-rose-300 text-rose-700 bg-white",
+                            !isWarn &&
+                            "border-rose-300 text-rose-700 bg-white",
                           )}
                         >
                           {formatAuditStatusLabel(c.status)}

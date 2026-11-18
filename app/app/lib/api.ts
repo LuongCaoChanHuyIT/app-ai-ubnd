@@ -7,15 +7,15 @@ export interface HelloPayload {
 
 export type HelloResult =
   | {
-      connected: true;
-      data: HelloPayload;
-      latencyMs: number;
-    }
+    connected: true;
+    data: HelloPayload;
+    latencyMs: number;
+  }
   | {
-      connected: false;
-      error: string;
-      latencyMs: number;
-    };
+    connected: false;
+    error: string;
+    latencyMs: number;
+  };
 
 export type DepartmentId = "VP" | "KT" | "VHXH" | "NNMT";
 export type AssistantMode = "soan_thao" | "nghiep_vu" | "tham_dinh";

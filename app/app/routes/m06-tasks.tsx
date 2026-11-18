@@ -58,7 +58,7 @@ import {
 } from "~/components/ui/table";
 import { Textarea } from "~/components/ui/textarea";
 
-export function meta({}: Route.MetaArgs) {
+export function meta({ }: Route.MetaArgs) {
   return [{ title: "Mô-đun 06 · Điều hành công việc — UBND Xã, Phường" }];
 }
 
