@@ -739,6 +739,82 @@ class CommuneDomainAndNd30Tests(unittest.TestCase):
         self.assertNotIn(".db", cloned["storage_label"])
         self.assertTrue(cloned["storage_label"].startswith("isolated-tenant://"))
 
+    def test_26_m05_eight_field_custom_diff_and_malicious_edge_files_matrix(self) -> None:
+        sid = "s-campaign4-matrix"
+        # 1. Forbidden executable extensions (.exe, .sh, .bat) -> HTTP 400 with Vietnamese detail
+        for bad_name in ("virus.exe", "attack.sh", "script.bat"):
+            r_bad = self.client.post(
+                f"/api/m05/sessions/{sid}/upload",
+                params={"department_id": "NNMT"},
+                headers=self.owner,
+                files={"file": (bad_name, b"#!/bin/sh\necho bad", "application/octet-stream")},
+            )
+            self.assertEqual(r_bad.status_code, 400, f"Expected 400 for {bad_name}")
+            self.assertIn("không được hỗ trợ", r_bad.json()["detail"])
+
+        # 2. Oversized >10MB file -> HTTP 413
+        r_big = self.client.post(
+            f"/api/m05/sessions/{sid}/upload",
+            params={"department_id": "NNMT"},
+            headers=self.owner,
+            files={"file": ("oversized.txt", b"A" * (10 * 1024 * 1024 + 2048), "text/plain")},
+        )
+        self.assertEqual(r_big.status_code, 413)
+
+        # 3. 0-byte empty PDF and scanned image PDF without OCR layer -> HTTP 200, graceful warning, 0 HTTP 500
+        r_empty_pdf = self.client.post(
+            f"/api/m05/sessions/{sid}-pdf/upload",
+            params={"department_id": "NNMT"},
+            headers=self.owner,
+            files={"file": ("empty_0byte.pdf", b"", "application/pdf")},
+        )
+        self.assertEqual(r_empty_pdf.status_code, 200)
+        r_scan_pdf = self.client.post(
+            f"/api/m05/sessions/{sid}-pdf/upload",
+            params={"department_id": "NNMT"},
+            headers=self.owner,
+            files={"file": ("scan_no_ocr.pdf", b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF", "application/pdf")},
+        )
+        self.assertEqual(r_scan_pdf.status_code, 200)
+        proc_pdf = self.client.post(
+            f"/api/m05/sessions/{sid}-pdf/process",
+            headers=self.owner,
+            json={"action": "tom_tat", "department_id": "NNMT"},
+        )
+        self.assertEqual(proc_pdf.status_code, 200)
+        self.assertIn("OCR", proc_pdf.json()["result_markdown"])
+
+        # 4. Custom 2 .txt files conflicting across ALL 8 structured administrative fields
+        file_a = (
+            "Chủ hộ: Phạm Văn Hùng. Số CCCD: 036088001122. Địa chỉ: Thôn Đông Lạc. "
+            "Tờ bản đồ số: 12 — Thửa đất số: 108. Diện tích: 215 m2. "
+            "Số tiền: 45.000.000 đồng. Ngày lập: 02/11/2026."
+        )
+        file_b = (
+            "Chủ hộ: Phạm Văn Hưng. Số CCCD: 036088001199. Địa chỉ: Thôn Tây Lạc. "
+            "Tờ bản đồ số: 14 — Thửa đất số: 109. Diện tích: 240 m2. "
+            "Số tiền: 52.000.000 đồng. Ngày lập: 09/11/2026."
+        )
+        self.client.post(
+            f"/api/m05/sessions/{sid}/upload",
+            params={"department_id": "NNMT"},
+            headers=self.owner,
+            files={"file": ("qa_8fields_a.txt", file_a.encode(), "text/plain")},
+        )
+        self.client.post(
+            f"/api/m05/sessions/{sid}/upload",
+            params={"department_id": "NNMT"},
+            headers=self.owner,
+            files={"file": ("qa_8fields_b.txt", file_b.encode(), "text/plain")},
+        )
+        diff_8 = self.client.post(
+            f"/api/m05/sessions/{sid}/process",
+            headers=self.owner,
+            json={"action": "doi_chieu", "department_id": "NNMT"},
+        ).json()
+        self.assertEqual(len(diff_8["highlights"]), 8)
+        self.assertIn("8 trường thông tin `[SAI LỆCH - CẦN XÁC MINH]`", diff_8["result_markdown"])
+
 
 if __name__ == "__main__":
     unittest.main()
