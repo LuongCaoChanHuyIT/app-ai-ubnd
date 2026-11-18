@@ -101,6 +101,10 @@ class UserCreateRequest(BaseModel):
     private_repo_access: bool = True
 
 
+class UserPatchRequest(BaseModel):
+    private_repo_access: bool
+
+
 class InstructionUpdateRequest(BaseModel):
     instruction: str = Field(..., min_length=5, max_length=8000)
 

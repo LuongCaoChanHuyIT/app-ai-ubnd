@@ -207,6 +207,35 @@ class ZeroTrustRbacAndTenantTests(unittest.TestCase):
         boot_root = self.client.get("/api/bootstrap").json()
         self.assertEqual(boot_root["commune_name"], "UBND Phường Tân Chính")
 
+    def test_nnmt_officer_seeded_without_private_repo_access_and_owner_can_toggle(self) -> None:
+        # Out-of-the-box Zero-Trust demo: canbo.nnmt@ubnd.vn has private_repo_access = False
+        nnmt_private = self.client.get(
+            "/api/m04/documents",
+            params={"department_id": "NNMT", "tier": "kho_rieng"},
+            headers=self.nnmt_officer,
+        ).json()["documents"]
+        self.assertEqual(nnmt_private, [])
+
+        # Owner can toggle private_repo_access via PATCH /api/m07/users/{user_id}
+        users = self.client.get("/api/m07/users", headers=self.owner).json()["users"]
+        nnmt_user = next(u for u in users if u["email"] == "canbo.nnmt@ubnd.vn")
+        self.assertFalse(nnmt_user["private_repo_access"])
+
+        patch_on = self.client.patch(
+            f"/api/m07/users/{nnmt_user['id']}",
+            headers=self.owner,
+            json={"private_repo_access": True},
+        )
+        self.assertEqual(patch_on.status_code, 200)
+        self.assertTrue(patch_on.json()["private_repo_access"])
+
+        nnmt_private_after = self.client.get(
+            "/api/m04/documents",
+            params={"department_id": "NNMT", "tier": "kho_rieng"},
+            headers=self.nnmt_officer,
+        ).json()["documents"]
+        self.assertGreaterEqual(len(nnmt_private_after), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

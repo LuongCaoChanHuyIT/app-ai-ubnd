@@ -807,7 +807,7 @@ def _build_seed_documents(commune_name: str, now: str) -> list[tuple[Any, ...]]:
 
 def init_db(
     db_path: Path | str | None = None,
-    commune_name: str = "UBND Phường Trung Tâm",
+    commune_name: str = "UBND xã, phường trung tâm",
     owner_email: str = "tsh.co@tshorg.vn",
 ) -> None:
     now = utc_now_iso()
@@ -953,7 +953,7 @@ def init_db(
                 ("canbo.vp@ubnd.vn", "Nguyễn Minh Tuấn", "Công chức Văn phòng - Thống kê", "officer", "VP", 1, 1, now),
                 ("canbo.kt@ubnd.vn", "Trần Thị Mai", "Công chức Tài chính - Kế toán", "officer", "KT", 1, 1, now),
                 ("canbo.vhxh@ubnd.vn", "Lê Hoàng Nam", "Công chức Văn hóa - Xã hội", "officer", "VHXH", 1, 1, now),
-                ("canbo.nnmt@ubnd.vn", "Phạm Quốc Bảo", "Công chức Địa chính - Môi trường", "officer", "NNMT", 1, 1, now),
+                ("canbo.nnmt@ubnd.vn", "Phạm Quốc Bảo", "Công chức Địa chính - Môi trường", "officer", "NNMT", 0, 1, now),
             ]
             users = [
                 (owner_clean, f"Chủ sở hữu ({commune_name})", "Chủ sở hữu hệ thống", "owner", "VP", 1, 1, now),
@@ -1004,7 +1004,7 @@ def get_commune_name(db_path: Path | str | None = None) -> str:
                 return str(row["value"])
         except sqlite3.OperationalError:
             pass
-    return "UBND Phường Trung Tâm"
+    return "UBND xã, phường trung tâm"
 
 
 def can_access_private_docs(

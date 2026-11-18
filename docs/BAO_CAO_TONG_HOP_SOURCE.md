@@ -118,3 +118,4 @@ npm test && npm run typecheck && npm run build
 cd /home/fedora/Documents/UBND-AI-Support && .venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 cd /home/fedora/Documents/UBND-AI-Support/app && npm run dev
 ```
+

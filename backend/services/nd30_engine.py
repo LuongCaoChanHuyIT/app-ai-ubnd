@@ -307,7 +307,7 @@ def build_nd30_draft(
     if resolved_auth == "chu_tich":
         signer_block = "CHỦ TỊCH"
     else:
-        signer_block = "TM. ỦY BAN NHÂN DÂN\n                                       CHỦ TỊCH"
+        signer_block = "TM. ỦY BAN NHÂN DÂN\n                                 CHỦ TỊCH"
 
     # Build Nơi nhận without self-listing CHỦ TỊCH when CHỦ TỊCH signs directly
     if canonical_type == "Quyết định":
@@ -319,25 +319,29 @@ def build_nd30_draft(
         first_recipient = f"- {recipient};"
 
     noi_nhan_lines = [
-        f"Nơi nhận:                              {signer_block}",
+        f"Nơi nhận:                        {signer_block}",
         first_recipient,
         f"- Thường trực Đảng ủy, HĐND {unit_display} (để b/c);",
         f"- Các Phó Chủ tịch UBND {unit_display};",
         f"- Lưu: VT, {dept_code}.",
-        "                                       (Chữ ký số, đóng dấu)",
+        "                                 (Chữ ký số, đóng dấu)",
     ]
 
     header_block = (
-        f"ỦY BAN NHÂN DÂN                       CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM\n"
-        f"{unit_upper:<38}Độc lập - Tự do - Hạnh phúc\n"
+        f"ỦY BAN NHÂN DÂN                 CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM\n"
+        f"{unit_upper:<32}Độc lập - Tự do - Hạnh phúc\n"
     )
 
+    def _end_sentence(s: str) -> str:
+        t = s.rstrip()
+        return t if t.endswith((".", "!", "?", ";", ":")) else f"{t}."
+
     if canonical_type == "Công văn":
-        numbered_body = "\n".join(f"{idx}. {pt}" for idx, pt in enumerate(raw_points, start=1))
+        numbered_body = "\n".join(f"{idx}. {_end_sentence(pt)}" for idx, pt in enumerate(raw_points, start=1))
         basis_intro = legal_bases[-1].rstrip(";")
         draft_text = (
             f"{header_block}"
-            f"Số: .../{symbol_code:<30}{place_name}, ngày 18 tháng 11 năm 2026\n"
+            f"Số: .../{symbol_code:<24}{place_name}, ngày 18 tháng 11 năm 2026\n"
             f"{subject_line}\n\n"
             f"Kính gửi: {recipient},\n\n"
             f"{basis_intro}; thực hiện nhiệm vụ quản lý nhà nước tại địa phương, "
@@ -353,11 +357,11 @@ def build_nd30_draft(
             if resolved_auth == "chu_tich"
             else f"ỦY BAN NHÂN DÂN {unit_upper}"
         )
-        articles = "\n".join(f"Điều {idx}. {pt}" for idx, pt in enumerate(raw_points, start=1))
+        articles = "\n".join(f"Điều {idx}. {_end_sentence(pt)}" for idx, pt in enumerate(raw_points, start=1))
         next_art = len(raw_points) + 1
         draft_text = (
             f"{header_block}"
-            f"Số: .../{symbol_code:<30}{place_name}, ngày 18 tháng 11 năm 2026\n\n"
+            f"Số: .../{symbol_code:<24}{place_name}, ngày 18 tháng 11 năm 2026\n\n"
             f"QUYẾT ĐỊNH\n"
             f"{subject_line}\n\n"
             f"{promulgator}\n\n"
@@ -371,10 +375,10 @@ def build_nd30_draft(
             + "\n".join(noi_nhan_lines)
         )
     elif canonical_type == "Tờ trình":
-        numbered_body = "\n".join(f"{idx}. {pt}" for idx, pt in enumerate(raw_points, start=1))
+        numbered_body = "\n".join(f"{idx}. {_end_sentence(pt)}" for idx, pt in enumerate(raw_points, start=1))
         draft_text = (
             f"{header_block}"
-            f"Số: .../{symbol_code:<30}{place_name}, ngày 18 tháng 11 năm 2026\n\n"
+            f"Số: .../{symbol_code:<24}{place_name}, ngày 18 tháng 11 năm 2026\n\n"
             f"TỜ TRÌNH\n"
             f"{subject_line}\n\n"
             f"Kính gửi: {recipient},\n\n"
@@ -386,12 +390,12 @@ def build_nd30_draft(
         )
     else:
         # Kế hoạch, Báo cáo, Thông báo, Chương trình...
-        numbered_body = "\n".join(f"{idx}. {pt}" for idx, pt in enumerate(raw_points, start=1))
+        numbered_body = "\n".join(f"{idx}. {_end_sentence(pt)}" for idx, pt in enumerate(raw_points, start=1))
         section_one = "I. KẾT QUẢ VÀ NỘI DUNG ĐÁNH GIÁ" if canonical_type == "Báo cáo" else "I. NỘI DUNG TRIỂN KHAI TRỌNG TÂM"
         section_two = "II. ĐỀ XUẤT, KIẾN NGHỊ" if canonical_type == "Báo cáo" else "II. TỔ CHỨC THỰC HIỆN"
         draft_text = (
             f"{header_block}"
-            f"Số: .../{symbol_code:<30}{place_name}, ngày 18 tháng 11 năm 2026\n\n"
+            f"Số: .../{symbol_code:<24}{place_name}, ngày 18 tháng 11 năm 2026\n\n"
             f"{canonical_type.upper()}\n"
             f"{subject_line}\n\n"
             + "\n".join(legal_bases)

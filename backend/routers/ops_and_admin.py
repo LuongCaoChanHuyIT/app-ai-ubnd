@@ -20,6 +20,7 @@ from backend.schemas import (
     TaskCreateRequest,
     TaskPatchRequest,
     UserCreateRequest,
+    UserPatchRequest,
 )
 
 router = APIRouter(prefix="/api", tags=["ops-and-admin-m06-m07"])
@@ -259,6 +260,48 @@ def create_rbac_user(
         db_path=actor.db_path,
     )
     return row
+
+
+@router.patch("/m07/users/{user_id}")
+def patch_rbac_user(
+    user_id: int,
+    req: UserPatchRequest,
+    actor: ActorContext = Depends(require_owner_actor),
+) -> dict[str, Any]:
+    with get_conn(actor.db_path) as conn:
+        target = conn.execute(
+            "SELECT * FROM users_rbac WHERE id = ?", (user_id,)
+        ).fetchone()
+        if not target:
+            raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản.")
+        if target["role"] == "owner" and not req.private_repo_access:
+            raise HTTPException(
+                status_code=400,
+                detail="Tài khoản Chủ sở hữu luôn có toàn quyền truy cập Kho dữ liệu riêng.",
+            )
+        conn.execute(
+            "UPDATE users_rbac SET private_repo_access = ? WHERE id = ?",
+            (1 if req.private_repo_access else 0, user_id),
+        )
+        conn.commit()
+        updated = dict(
+            conn.execute("SELECT * FROM users_rbac WHERE id = ?", (user_id,)).fetchone()
+        )
+        updated["private_repo_access"] = bool(updated["private_repo_access"])
+        updated["active"] = bool(updated["active"])
+
+    log_audit(
+        actor_email=actor.email,
+        department_id=updated["department_id"],
+        module_code="M07",
+        action="UPDATE_USER_RBAC",
+        detail=(
+            f"Cập nhật quyền Kho riêng của {updated['email']}: "
+            f"{'Được phép' if updated['private_repo_access'] else 'Giới hạn'}"
+        ),
+        db_path=actor.db_path,
+    )
+    return updated
 
 
 @router.delete("/m07/users/{user_id}")

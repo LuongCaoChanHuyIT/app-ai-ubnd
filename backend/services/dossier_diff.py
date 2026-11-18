@@ -225,7 +225,11 @@ def run_structured_session_processing(
         if ocr_banner:
             md_blocks.append(ocr_banner.rstrip() + "\n")
 
-        header_cols = ["Trường thông tin"] + [f"`{f['filename']}`" for f in files]
+        for i, f in enumerate(files, start=1):
+            md_blocks.append(f"- **Tệp {i}:** `{f['filename']}`")
+        md_blocks.append("")
+
+        header_cols = ["Trường thông tin"] + [f"Tệp {i}" for i in range(1, len(files) + 1)]
         md_blocks.append("| " + " | ".join(header_cols) + " |")
         md_blocks.append("| " + " | ".join(["---"] * len(header_cols)) + " |")
 
@@ -262,7 +266,11 @@ def run_structured_session_processing(
             warnings.append(msg)
             md_lines.append(f"- ℹ️ {msg}")
         else:
-            header_cols = ["Trường đối chiếu"] + [f"Tệp {i} (`{f['filename']}`)" for i, f in enumerate(files, start=1)] + ["Trạng thái"]
+            for i, f in enumerate(files, start=1):
+                md_lines.append(f"- **Tệp {i}:** `{f['filename']}`")
+            md_lines.append("")
+
+            header_cols = ["Trường đối chiếu"] + [f"Tệp {i}" for i in range(1, len(files) + 1)] + ["Trạng thái"]
             md_lines.append("| " + " | ".join(header_cols) + " |")
             md_lines.append("| " + " | ".join(["---"] * len(header_cols)) + " |")
 
