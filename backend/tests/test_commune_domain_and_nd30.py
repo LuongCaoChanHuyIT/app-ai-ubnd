@@ -661,6 +661,84 @@ class CommuneDomainAndNd30Tests(unittest.TestCase):
             self.assertIn("OCR", res["result_markdown"], f"Missing OCR warning in {act}")
             self.assertIn("Cảnh báo", res["result_markdown"], f"Missing explicit warning banner in {act}")
 
+    def test_23_anti_hallucination_rejects_pho_bo_truyen_thong_false_positive(self) -> None:
+        res = self.client.post(
+            "/api/m01/chat",
+            headers=self.vp_officer,
+            json={
+                "session_id": "s-pho-bo-trap",
+                "department_id": "VP",
+                "mode": "nghiep_vu",
+                "message": "Cách nấu phở bò truyền thống",
+            },
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["reply"]["citations"], [])
+
+    def test_24_cong_van_auto_authority_uses_tm_ubnd_and_audit_catches_missing_tm_on_collective_docs(self) -> None:
+        cv = self.client.post(
+            "/api/m03/draft",
+            headers=self.vhxh_officer,
+            json={
+                "department_id": "VHXH",
+                "doc_type": "Công văn",
+                "title": "Rà soát hộ nghèo cuối năm 2026",
+                "key_points": "Rà soát hộ nghèo và hộ cận nghèo tại các thôn",
+                "authority_mode": "auto",
+            },
+        ).json()
+        self.assertIn("TM. ỦY BAN NHÂN DÂN", cv["draft_text"])
+        self.assertIn("Kính gửi: Các bộ phận chuyên môn trực thuộc UBND\n", cv["draft_text"])
+
+        # Tamper collective Công văn to remove TM. ỦY BAN NHÂN DÂN -> audit MUST flag error
+        tampered_cv = cv["draft_text"].replace("TM. ỦY BAN NHÂN DÂN\n                                 CHỦ TỊCH", "CHỦ TỊCH")
+        audit_cv = self.client.post(
+            "/api/m03/audit",
+            headers=self.vhxh_officer,
+            json={
+                "department_id": "VHXH",
+                "doc_type": "Công văn",
+                "draft_text": tampered_cv,
+            },
+        ).json()
+        codes = [i["code"] for i in audit_cv["issues"]]
+        self.assertIn("MISSING_TM_ON_COLLECTIVE_DOC", codes)
+
+    def test_25_nd30_appendix_i_final_legal_basis_ends_with_period_and_tenant_label_hides_db_ext(self) -> None:
+        qd = self.client.post(
+            "/api/m03/draft",
+            headers=self.owner,
+            json={
+                "department_id": "VP",
+                "doc_type": "Quyết định",
+                "title": "Ban hành quy chế phối hợp",
+                "key_points": "Phân công đầu mối",
+            },
+        ).json()["draft_text"]
+        self.assertIn("Theo đề nghị của Công chức phụ trách bộ phận Văn phòng HĐND & UBND.\n", qd)
+
+        kh = self.client.post(
+            "/api/m03/draft",
+            headers=self.owner,
+            json={
+                "department_id": "VP",
+                "doc_type": "Kế hoạch",
+                "title": "Cải cách hành chính năm 2026",
+                "key_points": "Số hóa hồ sơ",
+            },
+        ).json()["draft_text"]
+        basis_lines = [ln.strip() for ln in kh.splitlines() if ln.strip().startswith("Căn cứ ")]
+        self.assertGreaterEqual(len(basis_lines), 1)
+        self.assertTrue(basis_lines[-1].endswith("."), f"Last basis line must end with '.': {basis_lines[-1]}")
+
+        cloned = self.client.post(
+            "/api/m07/clone-tenant",
+            headers=self.owner,
+            json={"commune_name": "Phường Kiểm Định 25", "admin_email": "ad@kd25.gov.vn"},
+        ).json()
+        self.assertNotIn(".db", cloned["storage_label"])
+        self.assertTrue(cloned["storage_label"].startswith("isolated-tenant://"))
+
 
 if __name__ == "__main__":
     unittest.main()

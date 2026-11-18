@@ -24,6 +24,7 @@ VIETNAMESE_ADMIN_STOPWORDS: set[str] = {
     "mức", "chuẩn", "đối", "tượng", "danh", "sách", "hành", "chính", "phép", "sao",
     "du", "phóng", "tàu", "gia", "đình", "khu", "cư", "tổ", "thôn", "phố", "chủ",
     "tịch", "ủy", "nhân", "soạn", "thảo", "nhanh", "chuyên", "sâu", "mới", "cũ",
+    "cách", "truyền", "thống", "nấu", "món", "ăn", "chơi", "học",
 }
 
 GENERIC_ADMIN_PHRASES: set[str] = {
@@ -35,6 +36,7 @@ GENERIC_ADMIN_PHRASES: set[str] = {
     "tải lên", "trong phiên", "hiện tại", "kiểm tra", "triển khai", "công tác",
     "quản lý", "nhà nước", "cơ quan", "đơn vị", "tổ dân", "dân phố", "tổ dân phố",
     "khu dân", "dân cư", "khu dân cư", "lần đầu", "định kỳ", "hằng năm", "hàng năm",
+    "truyền thống", "hiện đại", "phổ biến", "cơ bản",
 }
 
 # Domain concept expansion: maps colloquial/practical commune phrases to canonical doc numbers & terms

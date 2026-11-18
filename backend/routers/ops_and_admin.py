@@ -52,7 +52,7 @@ def slugify_commune(name: str) -> str:
 def _sanitize_tenant_row(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     out.pop("db_path", None)
-    out["storage_label"] = f"tenants/{out['slug']}.db"
+    out["storage_label"] = f"isolated-tenant://{out['slug']}"
     return out
 
 

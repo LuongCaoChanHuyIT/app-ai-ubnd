@@ -213,7 +213,7 @@ class DocsOpsAdminTests(unittest.TestCase):
         )
         self.assertEqual(res1.status_code, 200)
         self.assertEqual(res1.json()["slug"], "ubnd-phuong-ben-nghe")
-        self.assertEqual(res1.json()["storage_label"], "tenants/ubnd-phuong-ben-nghe.db")
+        self.assertEqual(res1.json()["storage_label"], "isolated-tenant://ubnd-phuong-ben-nghe")
         self.assertTrue((self.base_dir / "tenants" / "ubnd-phuong-ben-nghe.db").exists())
 
         dup = self.client.post(

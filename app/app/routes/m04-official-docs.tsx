@@ -169,6 +169,12 @@ export default function Module04OfficialDocsRoute({
     }
   }, [isOwner]);
 
+  useEffect(() => {
+    if (loaderData.q && loaderData.documents.length === 1) {
+      setSelectedDoc(loaderData.documents[0]);
+    }
+  }, [loaderData.q, loaderData.documents]);
+
   function setTabParam(nextTab: string) {
     const normalized = normalizeM04Tab(nextTab);
     const next = new URLSearchParams(searchParams);
@@ -350,16 +356,19 @@ export default function Module04OfficialDocsRoute({
           </h2>
         </div>
 
-        <Dialog open={addOpen} onOpenChange={setAddOpen}>
-          <DialogTrigger asChild>
-            <Button
-              size="sm"
-              className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
-            >
-              <Plus className="h-4 w-4" />
-              Bổ sung văn bản vào kho
-            </Button>
-          </DialogTrigger>
+        {hasPrivateRepoAccess && (
+          <Dialog open={addOpen} onOpenChange={setAddOpen}>
+            <DialogTrigger asChild>
+              <Button
+                size="sm"
+                className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+              >
+                <Plus className="h-4 w-4" />
+                {isOwner
+                  ? "Bổ sung văn bản vào kho"
+                  : `Bổ sung vào Kho riêng (${deptId})`}
+              </Button>
+            </DialogTrigger>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>Bổ sung văn bản vào kho ({deptId})</DialogTitle>
@@ -467,6 +476,7 @@ export default function Module04OfficialDocsRoute({
             )}
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       {!hasPrivateRepoAccess && (

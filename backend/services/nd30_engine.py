@@ -241,8 +241,9 @@ def resolve_issuing_authority(
     if mode in {"ubnd", "chu_tich"}:
         return mode
 
-    # Auto classification based on Law on Organization of Local Government 65/2025/QH15
-    if canonical_doc_type in {"Kế hoạch", "Báo cáo", "Tờ trình", "Chương trình", "Quy chế"}:
+    # Auto classification based on Law on Organization of Local Government 65/2025/QH15:
+    # Công văn, Kế hoạch, Báo cáo, Tờ trình, Chương trình, Quy chế are issued in the name of collective UBND ("TM. ỦY BAN NHÂN DÂN")
+    if canonical_doc_type in {"Công văn", "Kế hoạch", "Báo cáo", "Tờ trình", "Chương trình", "Quy chế"}:
         return "ubnd"
 
     combined = f"{title} {key_points}".lower()
@@ -338,14 +339,19 @@ def build_nd30_draft(
 
     if canonical_type == "Công văn":
         numbered_body = "\n".join(f"{idx}. {_end_sentence(pt)}" for idx, pt in enumerate(raw_points, start=1))
-        basis_intro = legal_bases[-1].rstrip(";")
+        basis_intro = legal_bases[-1].rstrip(";.")
+        issuing_subject = (
+            f"Chủ tịch Ủy ban nhân dân {unit_display}"
+            if resolved_auth == "chu_tich"
+            else f"Ủy ban nhân dân {unit_display}"
+        )
         draft_text = (
             f"{header_block}"
             f"Số: .../{symbol_code:<24}{place_name}, ngày 18 tháng 11 năm 2026\n"
             f"{subject_line}\n\n"
-            f"Kính gửi: {recipient},\n\n"
+            f"Kính gửi: {recipient}\n\n"
             f"{basis_intro}; thực hiện nhiệm vụ quản lý nhà nước tại địa phương, "
-            f"Ủy ban nhân dân {unit_display} đề nghị triển khai các nội dung sau:\n"
+            f"{issuing_subject} đề nghị triển khai các nội dung sau:\n"
             f"{numbered_body}\n\n"
             f"Đề nghị {recipient} nghiêm túc tổ chức thực hiện; nếu có vướng mắc kịp thời phản ánh qua "
             f"bộ phận {department['name']} để tổng hợp, báo cáo./.\n\n"
@@ -366,7 +372,7 @@ def build_nd30_draft(
             f"{subject_line}\n\n"
             f"{promulgator}\n\n"
             + "\n".join(legal_bases)
-            + f"\nTheo đề nghị của Công chức phụ trách bộ phận {department['name']},\n\n"
+            + f"\nTheo đề nghị của Công chức phụ trách bộ phận {department['name']}.\n\n"
             f"QUYẾT ĐỊNH:\n\n"
             f"{articles}\n"
             f"Điều {next_art}. Quyết định này có hiệu lực thi hành kể từ ngày ký. "
@@ -376,13 +382,14 @@ def build_nd30_draft(
         )
     elif canonical_type == "Tờ trình":
         numbered_body = "\n".join(f"{idx}. {_end_sentence(pt)}" for idx, pt in enumerate(raw_points, start=1))
+        bases_period = legal_bases[:-1] + [legal_bases[-1].rstrip(";.") + "."]
         draft_text = (
             f"{header_block}"
             f"Số: .../{symbol_code:<24}{place_name}, ngày 18 tháng 11 năm 2026\n\n"
             f"TỜ TRÌNH\n"
             f"{subject_line}\n\n"
-            f"Kính gửi: {recipient},\n\n"
-            + "\n".join(legal_bases)
+            f"Kính gửi: {recipient}\n\n"
+            + "\n".join(bases_period)
             + f"\n\nỦy ban nhân dân {unit_display} kính trình {recipient} xem xét, phê duyệt các nội dung trọng tâm sau:\n"
             f"{numbered_body}\n\n"
             f"Ủy ban nhân dân {unit_display} kính trình {recipient} xem xét, quyết định./.\n\n"
@@ -391,6 +398,7 @@ def build_nd30_draft(
     else:
         # Kế hoạch, Báo cáo, Thông báo, Chương trình...
         numbered_body = "\n".join(f"{idx}. {_end_sentence(pt)}" for idx, pt in enumerate(raw_points, start=1))
+        bases_period = legal_bases[:-1] + [legal_bases[-1].rstrip(";.") + "."]
         section_one = "I. KẾT QUẢ VÀ NỘI DUNG ĐÁNH GIÁ" if canonical_type == "Báo cáo" else "I. NỘI DUNG TRIỂN KHAI TRỌNG TÂM"
         section_two = "II. ĐỀ XUẤT, KIẾN NGHỊ" if canonical_type == "Báo cáo" else "II. TỔ CHỨC THỰC HIỆN"
         draft_text = (
@@ -398,7 +406,7 @@ def build_nd30_draft(
             f"Số: .../{symbol_code:<24}{place_name}, ngày 18 tháng 11 năm 2026\n\n"
             f"{canonical_type.upper()}\n"
             f"{subject_line}\n\n"
-            + "\n".join(legal_bases)
+            + "\n".join(bases_period)
             + f"\n\n{section_one}\n{numbered_body}\n\n"
             f"{section_two}\n"
             f"Giao bộ phận {department['name']} chủ trì theo dõi, đôn đốc thực hiện {canonical_type.lower()} này, "
@@ -700,6 +708,25 @@ def audit_nd30_draft(
                 "error",
                 "Quyết định ban hành nhân danh tập thể 'ỦY BAN NHÂN DÂN' nhưng chữ ký cuối trang không ghi 'TM. ỦY BAN NHÂN DÂN'.",
                 "Thêm dòng 'TM. ỦY BAN NHÂN DÂN' phía trên chức vụ 'CHỦ TỊCH' theo khoản 7 Điều 8 Nghị định 30/2020/NĐ-CP.",
+            )
+    else:
+        speaks_as_collective_ubnd = (
+            bool(re.search(r"(?<!chủ tịch\s)ủy\s+ban\s+nhân\s+dân\s+[^\n]{0,50}\b(?:đề\s+nghị|kính\s+trình|báo\s+cáo|thông\s+báo|ban\s+hành)", text_lower))
+            or canonical_type in {"Kế hoạch", "Báo cáo", "Tờ trình"}
+        )
+        speaks_as_personal_chairman = bool(
+            re.search(r"chủ\s+tịch\s+ủy\s+ban\s+nhân\s+dân\s+[^\n]{0,50}\b(?:đề\s+nghị|yêu\s+cầu|thông\s+báo)", text_lower)
+        )
+        if speaks_as_collective_ubnd and not speaks_as_personal_chairman and has_chu_tich_sig and not has_tm_ubnd and not has_kt_ct:
+            tq_fail = True
+            tq_notes.append(f"Mâu thuẫn thẩm quyền: {canonical_type} ban hành nhân danh tập thể UBND nhưng chữ ký cuối văn bản thiếu 'TM. ỦY BAN NHÂN DÂN'.")
+            add_issue(
+                "MISSING_TM_ON_COLLECTIVE_DOC",
+                "tham_quyen",
+                20,
+                "error",
+                f"Văn bản '{canonical_type}' ban hành nhân danh tập thể 'ỦY BAN NHÂN DÂN' nhưng phần chữ ký cuối trang thiếu dòng 'TM. ỦY BAN NHÂN DÂN'.",
+                "Bổ sung dòng 'TM. ỦY BAN NHÂN DÂN' phía trên chức vụ 'CHỦ TỊCH' theo khoản 7 Điều 8 Nghị định 30/2020/NĐ-CP.",
             )
 
     # Check self-listing signer in Nơi nhận
