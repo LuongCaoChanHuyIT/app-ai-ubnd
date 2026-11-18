@@ -22,12 +22,16 @@ class ExtendedAnalyzeRequest(BaseModel):
     context: str = Field(default="", max_length=4000)
 
 
+AuthorityMode = Literal["auto", "ubnd", "chu_tich"]
+
+
 class DraftRequest(BaseModel):
     department_id: DepartmentId = "VP"
     doc_type: str = Field(default="Công văn", min_length=2, max_length=64)
     title: str = Field(..., min_length=3, max_length=500)
     key_points: str = Field(default="", max_length=6000)
     recipient: str = Field(default="Các bộ phận chuyên môn trực thuộc UBND", max_length=300)
+    authority_mode: AuthorityMode = "auto"
 
 
 class AuditRequest(BaseModel):

@@ -128,3 +128,4 @@ def enforce_dept_scope(actor: ActorContext, target_dept_id: str) -> None:
                 f"thao tác hoặc khai thác dữ liệu của bộ phận {normalized}."
             ),
         )
+

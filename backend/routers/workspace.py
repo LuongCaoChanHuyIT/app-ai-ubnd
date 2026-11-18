@@ -234,6 +234,7 @@ def m03_draft(
         key_points=req.key_points,
         recipient=req.recipient,
         actor_email=actor.email,
+        authority_mode=req.authority_mode,
         db_path=actor.db_path,
     )
     log_audit(
