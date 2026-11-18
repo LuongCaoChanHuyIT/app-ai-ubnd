@@ -76,3 +76,4 @@ export default function WorkspaceLayoutRoute({ loaderData }: Route.ComponentProp
     />
   );
 }
+

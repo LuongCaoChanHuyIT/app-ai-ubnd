@@ -23,7 +23,7 @@ def mask_secret(secret: str) -> str:
     cleaned = (secret or "").strip()
     if not cleaned:
         return ""
-    if len(cleaned) <= 6:
+    if len(cleaned) <= 10:
         return "***"
     return f"{cleaned[:3]}***{cleaned[-4:]}"
 
@@ -35,9 +35,10 @@ def slugify_commune(name: str) -> str:
     normalized = unicodedata.normalize("NFKD", cleaned)
     ascii_only = "".join(ch for ch in normalized if not unicodedata.combining(ch))
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_only.lower()).strip("-")
+    slug = slug[:80].rstrip("-")
     if not slug:
         raise HTTPException(status_code=400, detail="Tên xã/phường không hợp lệ để tạo mã định danh.")
-    return slug[:80]
+    return slug
 
 
 def require_owner(actor_email: str) -> dict[str, Any]:
@@ -180,7 +181,7 @@ def list_rbac_users() -> dict[str, Any]:
 @router.post("/m07/users")
 def create_rbac_user(
     req: UserCreateRequest,
-    x_actor_email: str = Header(default="tsh.co@tshorg.vn"),
+    x_actor_email: str = Header(default=""),
 ) -> dict[str, Any]:
     require_owner(x_actor_email)
     now = utc_now_iso()
@@ -226,7 +227,7 @@ def create_rbac_user(
 @router.delete("/m07/users/{user_id}")
 def delete_rbac_user(
     user_id: int,
-    x_actor_email: str = Header(default="tsh.co@tshorg.vn"),
+    x_actor_email: str = Header(default=""),
 ) -> dict[str, Any]:
     require_owner(x_actor_email)
     with get_conn() as conn:
@@ -259,7 +260,7 @@ def delete_rbac_user(
 def update_department_instruction(
     dept_id: str,
     req: InstructionUpdateRequest,
-    x_actor_email: str = Header(default="tsh.co@tshorg.vn"),
+    x_actor_email: str = Header(default=""),
 ) -> dict[str, Any]:
     require_owner(x_actor_email)
     with get_conn() as conn:
@@ -304,7 +305,7 @@ def list_api_connectors() -> dict[str, Any]:
 def update_api_connector(
     connector_id: int,
     req: ConnectorUpdateRequest,
-    x_actor_email: str = Header(default="tsh.co@tshorg.vn"),
+    x_actor_email: str = Header(default=""),
 ) -> dict[str, Any]:
     require_owner(x_actor_email)
     with get_conn() as conn:
@@ -381,7 +382,7 @@ def list_cloned_tenants() -> dict[str, Any]:
 @router.post("/m07/clone-tenant")
 def clone_commune_tenant(
     req: CloneTenantRequest,
-    x_actor_email: str = Header(default="tsh.co@tshorg.vn"),
+    x_actor_email: str = Header(default=""),
 ) -> dict[str, Any]:
     require_owner(x_actor_email)
     slug = slugify_commune(req.commune_name)
@@ -402,28 +403,33 @@ def clone_commune_tenant(
                 detail=f"Hệ thống độc lập với mã '{slug}' đã tồn tại; không ghi đè dữ liệu cũ.",
             )
 
-        init_db(
-            db_path=target_db,
-            commune_name=req.commune_name.strip(),
-            owner_email=req.admin_email.strip().lower(),
-        )
+        try:
+            init_db(
+                db_path=target_db,
+                commune_name=req.commune_name.strip(),
+                owner_email=req.admin_email.strip().lower(),
+            )
+            now = utc_now_iso()
+            cur = conn.execute(
+                """
+                INSERT INTO cloned_tenants(slug, commune_name, admin_email, db_path, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    slug,
+                    req.commune_name.strip(),
+                    req.admin_email.strip().lower(),
+                    str(target_db),
+                    now,
+                ),
+            )
+            tid = cur.lastrowid
+            conn.commit()
+        except Exception:
+            if target_db.exists():
+                target_db.unlink(missing_ok=True)
+            raise
 
-        now = utc_now_iso()
-        cur = conn.execute(
-            """
-            INSERT INTO cloned_tenants(slug, commune_name, admin_email, db_path, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                slug,
-                req.commune_name.strip(),
-                req.admin_email.strip().lower(),
-                str(target_db),
-                now,
-            ),
-        )
-        tid = cur.lastrowid
-        conn.commit()
         created = dict(
             conn.execute("SELECT * FROM cloned_tenants WHERE id = ?", (tid,)).fetchone()
         )
@@ -436,3 +442,4 @@ def clone_commune_tenant(
         detail=f"Nhân bản hệ thống AI độc lập cho '{req.commune_name.strip()}' ({slug})",
     )
     return created
+

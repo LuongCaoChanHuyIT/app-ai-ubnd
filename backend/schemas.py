@@ -41,7 +41,7 @@ class CreateDocRequest(BaseModel):
     title: str = Field(..., min_length=3, max_length=500)
     doc_type: str = Field(default="Văn bản hướng dẫn", max_length=100)
     tier: DocTier = "kho_rieng"
-    department_id: str = Field(default="VP", max_length=16)
+    department_id: Literal["VP", "KT", "VHXH", "NNMT", "ALL"] = "VP"
     issuer: str = Field(default="UBND Xã/Phường", max_length=200)
     issued_date: str = Field(default="2026-11-01", max_length=32)
     status: str = Field(default="con_hieu_luc", max_length=32)
@@ -104,3 +104,4 @@ class ConnectorUpdateRequest(BaseModel):
 class CloneTenantRequest(BaseModel):
     commune_name: str = Field(..., min_length=3, max_length=200)
     admin_email: str = Field(..., min_length=5, max_length=200)
+

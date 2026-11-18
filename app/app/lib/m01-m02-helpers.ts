@@ -130,3 +130,4 @@ export function buildM03HandoffUrl(
   params.set("points", points);
   return `/soan-thao-kiem-tra?${params.toString()}`;
 }
+

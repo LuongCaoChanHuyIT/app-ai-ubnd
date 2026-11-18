@@ -83,9 +83,8 @@ def _extract_pdf_text(filename: str, content: bytes) -> tuple[str, str]:
     if len(joined_fallback) >= 12:
         return (joined_fallback, "Đã trích xuất lớp văn bản từ PDF")
 
-    size_kb = max(1, round(len(content) / 1024))
     return (
-        f"[Tệp PDF quét ảnh / chữ ký số: {filename} ({size_kb} KB) — chưa có lớp văn bản OCR trực tiếp]",
+        f"[Tệp PDF quét ảnh / chữ ký số: {filename} — chưa có lớp văn bản OCR trực tiếp]",
         "Tệp PDF dạng bản quét hình ảnh hoặc chưa có lớp text OCR; hệ thống đã ghi nhận siêu dữ liệu tệp để cán bộ đối chiếu.",
     )
 
@@ -127,3 +126,4 @@ def parse_uploaded_bytes(filename: str, content: bytes) -> tuple[str, str]:
         return (text, note)
 
     return _extract_pdf_text(clean_name, content)
+

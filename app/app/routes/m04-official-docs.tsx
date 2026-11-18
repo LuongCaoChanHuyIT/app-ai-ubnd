@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Form, useRevalidator, useSearchParams } from "react-router";
 import {
   BookOpen,
@@ -112,7 +112,33 @@ export default function Module04OfficialDocsRoute({
   const activeTab =
     searchParams.get("tab") === "de-nghi" ? "de-nghi" : "danh-muc";
 
+  const [documents, setDocuments] = useState<OfficialDoc[]>(
+    loaderData.documents,
+  );
   const [selectedDoc, setSelectedDoc] = useState<OfficialDoc | null>(null);
+
+  useEffect(() => {
+    setDocuments(loaderData.documents);
+  }, [loaderData.documents]);
+
+  useEffect(() => {
+    const fetchActorScopedDocs = () => {
+      const params = new URLSearchParams();
+      params.set("department_id", deptId);
+      if (loaderData.q) params.set("q", loaderData.q);
+      if (loaderData.tier) params.set("tier", loaderData.tier);
+      void apiRequest<{ documents: OfficialDoc[] }>(
+        `/api/m04/documents?${params.toString()}`,
+        { actorEmail: getActiveActorEmail() },
+      )
+        .then((res) => setDocuments(res.documents))
+        .catch(() => {});
+    };
+    fetchActorScopedDocs();
+    window.addEventListener("ubnd-actor-changed", fetchActorScopedDocs);
+    return () =>
+      window.removeEventListener("ubnd-actor-changed", fetchActorScopedDocs);
+  }, [deptId, loaderData.q, loaderData.tier]);
   const [addOpen, setAddOpen] = useState(false);
   const [docNumber, setDocNumber] = useState("");
   const [docTitle, setDocTitle] = useState("");
@@ -289,7 +315,7 @@ export default function Module04OfficialDocsRoute({
         <TabsList>
           <TabsTrigger value="danh-muc" className="gap-1.5">
             <BookOpen className="h-3.5 w-3.5" />
-            Danh mục văn bản ({loaderData.documents.length})
+            Danh mục văn bản ({documents.length})
           </TabsTrigger>
           <TabsTrigger value="de-nghi" className="gap-1.5">
             <RefreshCw className="h-3.5 w-3.5" />
@@ -353,7 +379,7 @@ export default function Module04OfficialDocsRoute({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {loaderData.documents.map((doc) => (
+                    {documents.map((doc) => (
                       <TableRow key={doc.id}>
                         <TableCell className="font-semibold text-blue-700 text-xs">
                           {doc.doc_number}
@@ -519,7 +545,10 @@ export default function Module04OfficialDocsRoute({
                 </DialogTitle>
                 <DialogDescription>
                   Cơ quan ban hành: {selectedDoc.issuer} · Ngày ban hành:{" "}
-                  {selectedDoc.issued_date} · Phạm vi: {selectedDoc.department_id}
+                  {selectedDoc.issued_date} · Phạm vi:{" "}
+                  {selectedDoc.department_id === "ALL"
+                    ? "Toàn UBND"
+                    : `Phòng ${selectedDoc.department_id}`}
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-3 text-xs leading-relaxed text-slate-700">

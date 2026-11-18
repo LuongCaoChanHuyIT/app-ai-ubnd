@@ -26,3 +26,4 @@ test("formatTierLabel and formatAuditStatusLabel map backend codes to Vietnamese
   assert.equal(formatAuditStatusLabel("khong_dat"), "Không đạt");
   assert.equal(SESSION_PROCESS_TABS.length, 4);
 });
+

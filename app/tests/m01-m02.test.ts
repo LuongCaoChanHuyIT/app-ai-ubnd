@@ -29,3 +29,4 @@ test("buildM03HandoffUrl encodes department, title, and option pros into M03 que
   assert.ok((params.get("title") ?? "").includes("Quản lý trật tự xây dựng"));
   assert.ok((params.get("points") ?? "").includes("Giảm vi phạm mới"));
 });
+

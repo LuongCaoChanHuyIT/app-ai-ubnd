@@ -372,12 +372,16 @@ def init_db(
 
         user_count = conn.execute("SELECT COUNT(*) AS c FROM users_rbac").fetchone()["c"]
         if user_count == 0:
-            users = [
-                (owner_email, "Quản trị viên Hệ thống (TSH)", "Chủ sở hữu hệ thống", "owner", "VP", 1, 1, now),
+            owner_clean = owner_email.strip().lower()
+            default_officers = [
                 ("canbo.vp@ubnd.vn", "Nguyễn Minh Tuấn", "Công chức Văn phòng - Thống kê", "officer", "VP", 1, 1, now),
                 ("canbo.kt@ubnd.vn", "Trần Thị Mai", "Công chức Tài chính - Kế toán", "officer", "KT", 1, 1, now),
                 ("canbo.vhxh@ubnd.vn", "Lê Hoàng Nam", "Công chức Văn hóa - Xã hội", "officer", "VHXH", 1, 1, now),
                 ("canbo.nnmt@ubnd.vn", "Phạm Quốc Bảo", "Công chức Địa chính - Môi trường", "officer", "NNMT", 1, 1, now),
+            ]
+            users = [
+                (owner_clean, "Quản trị viên Hệ thống (TSH)", "Chủ sở hữu hệ thống", "owner", "VP", 1, 1, now),
+                *[u for u in default_officers if u[0].lower() != owner_clean],
             ]
             conn.executemany(
                 """
@@ -408,6 +412,26 @@ def init_db(
             )
 
         conn.commit()
+
+
+def can_access_private_docs(
+    actor_email: str,
+    target_dept_id: str,
+    db_path: Path | str | None = None,
+) -> bool:
+    email = (actor_email or "").strip().lower()
+    if not email:
+        return False
+    with get_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT role, department_id, private_repo_access, active FROM users_rbac WHERE lower(email) = ?",
+            (email,),
+        ).fetchone()
+        if not row or not row["active"]:
+            return False
+        if row["role"] == "owner":
+            return True
+        return bool(row["private_repo_access"]) and row["department_id"] == target_dept_id
 
 
 def log_audit(

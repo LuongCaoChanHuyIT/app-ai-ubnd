@@ -52,12 +52,14 @@ def wipe_session_state(
     session_id: str,
     x_actor_email: str = Header(default="tsh.co@tshorg.vn"),
     department_id: str = "VP",
+    module_code: str = "M01",
 ) -> dict[str, Any]:
     existed = SESSION_STORE.wipe(session_id)
+    safe_mod = module_code if module_code in {"M01", "M05"} else "M01"
     log_audit(
         actor_email=x_actor_email,
         department_id=department_id,
-        module_code="M01",
+        module_code=safe_mod,
         action="WIPE_SESSION",
         detail=f"Kết thúc phiên và xóa bộ nhớ tạm ({session_id})",
     )
@@ -117,6 +119,7 @@ def m03_draft(
         title=req.title,
         key_points=req.key_points,
         recipient=req.recipient,
+        actor_email=x_actor_email,
     )
     log_audit(
         actor_email=x_actor_email,
@@ -146,3 +149,4 @@ def m03_audit(
         detail=f"Kiểm tra dự thảo {req.doc_type} — điểm {result['score']}/100",
     )
     return result
+

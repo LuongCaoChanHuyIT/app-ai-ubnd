@@ -7,12 +7,20 @@ from typing import Any
 
 import httpx
 
-from backend.db import SESSION_STORE, get_conn, utc_now_iso
+from backend.db import SESSION_STORE, can_access_private_docs, get_conn, utc_now_iso
 
 LEGAL_RESPONSIBILITY_NOTE = (
     "Lưu ý nghiệp vụ: AI là công cụ hỗ trợ; cán bộ, công chức và người có thẩm quyền "
     "trực tiếp kiểm tra, quyết định và chịu trách nhiệm đối với nội dung sử dụng."
 )
+
+
+def _clip(text: str, max_chars: int = 200) -> str:
+    cleaned = " ".join((text or "").split())
+    if len(cleaned) <= max_chars:
+        return cleaned
+    cut = cleaned[:max_chars].rsplit(" ", 1)[0]
+    return f"{cut}…"
 
 
 def get_department_info(department_id: str, db_path: Path | str | None = None) -> dict[str, Any]:
@@ -37,16 +45,28 @@ def search_official_documents(
     query: str,
     department_id: str,
     tier: str | None = None,
+    include_private: bool = True,
+    fallback_on_empty: bool = False,
     db_path: Path | str | None = None,
 ) -> list[dict[str, Any]]:
     with get_conn(db_path) as conn:
-        sql = """
-            SELECT id, doc_number, title, doc_type, tier, department_id,
-                   issuer, issued_date, status, summary, content, created_at
-            FROM official_documents
-            WHERE (tier != 'kho_rieng' OR department_id IN (?, 'ALL'))
-        """
-        params: list[Any] = [department_id]
+        if include_private:
+            sql = """
+                SELECT id, doc_number, title, doc_type, tier, department_id,
+                       issuer, issued_date, status, summary, content, created_at
+                FROM official_documents
+                WHERE (tier != 'kho_rieng' OR department_id IN (?, 'ALL'))
+            """
+            params: list[Any] = [department_id]
+        else:
+            sql = """
+                SELECT id, doc_number, title, doc_type, tier, department_id,
+                       issuer, issued_date, status, summary, content, created_at
+                FROM official_documents
+                WHERE tier != 'kho_rieng'
+            """
+            params = []
+
         if tier and tier in {"trung_uong", "dia_phuong", "kho_rieng"}:
             sql += " AND tier = ?"
             params.append(tier)
@@ -81,7 +101,9 @@ def search_official_documents(
     if scored:
         scored.sort(key=lambda item: item[0], reverse=True)
         return [item[1] for item in scored]
-    return rows[:3]
+    if fallback_on_empty:
+        return [r for r in rows if r["tier"] != "kho_rieng"][:3]
+    return []
 
 
 def _try_live_llm(system_prompt: str, user_prompt: str, db_path: Path | str | None = None) -> str | None:
@@ -139,8 +161,15 @@ def run_assistant_turn(
     session_state = SESSION_STORE.get_or_create(session_id)
     session_files = session_state["files"]
 
+    allow_private = can_access_private_docs(actor_email, department_id, db_path)
     matched_docs = (
-        search_official_documents(message, department_id, db_path=db_path)[:3]
+        search_official_documents(
+            message,
+            department_id,
+            include_private=allow_private,
+            fallback_on_empty=True,
+            db_path=db_path,
+        )[:3]
         if mode in {"nghiep_vu", "tham_dinh"}
         else []
     )
@@ -218,7 +247,7 @@ def run_assistant_turn(
             else "*(Chưa có tệp đính kèm trong phiên — thẩm định dựa trên nội dung mô tả trực tiếp)*\n\n"
         )
         basis_lines = "\n".join(
-            f"- **{d['doc_number']}** — *{d['title']}*: {d['content'][:220]}"
+            f"- **{d['doc_number']}** — *{d['title']}*: {_clip(d['content'], 220)}"
             for d in matched_docs
         )
         reply_content = (
@@ -234,12 +263,12 @@ def run_assistant_turn(
         )
     else:
         basis_lines = "\n".join(
-            f"- **{d['doc_number']}** ({d['issuer']}): {d['summary']} — *{d['content'][:200]}*"
+            f"- **{d['doc_number']}** ({d['issuer']}): {d['summary']} — *{_clip(d['content'], 200)}*"
             for d in matched_docs
         )
         file_note = (
             f"\n\n**Thông tin ghi nhận từ {len(session_files)} tệp trong phiên:** "
-            + "; ".join(f"{f['filename']}: {f['extracted_text'][:160]}" for f in session_files)
+            + "; ".join(f"{f['filename']}: {_clip(f['extracted_text'], 160)}" for f in session_files)
             if session_files
             else ""
         )
@@ -250,7 +279,7 @@ def run_assistant_turn(
             f"{file_note}\n\n"
             f"**2. Hướng xử lý đề xuất cho cán bộ chuyên môn:**\n"
             f"- Bước 1: Tiếp nhận và kiểm tra tính đầy đủ, hợp lệ của thành phần hồ sơ theo quy định hiện hành.\n"
-            f"- Bước 2: Áp dụng chỉ dẫn nghiệp vụ của **{dept['name']}** (*{dept['instruction'][:180]}*).\n"
+            f"- Bước 2: Áp dụng chỉ dẫn nghiệp vụ của **{dept['name']}** (*{_clip(dept['instruction'], 180)}*).\n"
             f"- Bước 3: Lập phiếu trình kèm dự thảo văn bản kết quả chuyển Lãnh đạo UBND xem xét phê duyệt.\n\n"
             f"*{LEGAL_RESPONSIBILITY_NOTE}*"
         )
@@ -338,10 +367,18 @@ def generate_administrative_draft(
     title: str,
     key_points: str,
     recipient: str = "Các bộ phận chuyên môn trực thuộc UBND",
+    actor_email: str = "tsh.co@tshorg.vn",
     db_path: Path | str | None = None,
 ) -> dict[str, Any]:
     dept = get_department_info(department_id, db_path)
-    docs = search_official_documents(f"{doc_type} {title}", department_id, db_path=db_path)[:2]
+    allow_private = can_access_private_docs(actor_email, department_id, db_path)
+    docs = search_official_documents(
+        f"{doc_type} {title}",
+        department_id,
+        include_private=allow_private,
+        fallback_on_empty=True,
+        db_path=db_path,
+    )[:2]
     legal_bases = [
         "Căn cứ Luật Tổ chức chính quyền địa phương ngày 19 tháng 6 năm 2025;",
         "Căn cứ Nghị định số 30/2020/NĐ-CP ngày 05 tháng 3 năm 2020 của Chính phủ về công tác văn thư;",
@@ -362,26 +399,46 @@ def generate_administrative_draft(
             "Định kỳ tổng hợp kết quả báo cáo Chủ tịch UBND xã/phường xem xét, chỉ đạo.",
         ]
 
-    numbered_body = "\n".join(f"{idx}. {pt}" for idx, pt in enumerate(raw_points, start=1))
     doc_upper = doc_type.strip().upper()
+    is_quyet_dinh = doc_type.strip().lower() == "quyết định"
     authority_signer = (
         "TM. ỦY BAN NHÂN DÂN\nCHỦ TỊCH"
         if doc_type.strip().lower() in {"kế hoạch", "báo cáo", "quyết định", "thông báo"}
         else "KT. CHỦ TỊCH\nPHÓ CHỦ TỊCH"
     )
+    symbol_code = "QĐ-UBND" if is_quyet_dinh else f"UBND-{dept['code']}"
+
+    if is_quyet_dinh:
+        articles = "\n".join(
+            f"Điều {idx}. {pt}" for idx, pt in enumerate(raw_points, start=1)
+        )
+        next_art = len(raw_points) + 1
+        body_section = (
+            f"QUYẾT ĐỊNH:\n\n"
+            f"{articles}\n"
+            f"Điều {next_art}. Quyết định này có hiệu lực kể từ ngày ký. "
+            f"Văn phòng HĐND & UBND, Phụ trách {dept['name']} và các bộ phận liên quan chịu trách nhiệm thi hành Quyết định này./."
+        )
+    else:
+        numbered_body = "\n".join(
+            f"{idx}. {pt}" for idx, pt in enumerate(raw_points, start=1)
+        )
+        body_section = (
+            f"I. NỘI DUNG TRIỂN KHAI\n{numbered_body}\n\n"
+            f"II. TỔ CHỨC THỰC HIỆN\n"
+            f"Giao {dept['name']} theo dõi, đôn đốc việc thực hiện {doc_type.lower()} này và tổng hợp báo cáo theo quy định."
+        )
 
     draft_text = (
         "ỦY BAN NHÂN DÂN XÃ/PHƯỜNG          CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM\n"
         "                                      Độc lập - Tự do - Hạnh phúc\n"
-        "Số: .../UBND-VP\n"
+        f"Số: .../{symbol_code}\n"
         "                                      ..., ngày 18 tháng 11 năm 2026\n\n"
         f"{doc_upper}\n"
         f"Về việc {title.strip()}\n\n"
         + "\n".join(legal_bases)
         + f"\nTheo đề nghị của Phụ trách {dept['name']},\n\n"
-        f"I. NỘI DUNG TRIỂN KHAI\n{numbered_body}\n\n"
-        f"II. TỔ CHỨC THỰC HIỆN\n"
-        f"Giao {dept['name']} theo dõi, đôn đốc việc thực hiện {doc_type.lower()} này và tổng hợp báo cáo theo quy định.\n\n"
+        f"{body_section}\n\n"
         f"Nơi nhận:                              {authority_signer}\n"
         f"- {recipient};\n"
         f"- Chủ tịch, các PCT UBND;\n"
@@ -624,3 +681,4 @@ def process_session_files(
         ),
         "highlights": [f["filename"] for f in files],
     }
+

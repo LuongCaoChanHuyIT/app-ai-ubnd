@@ -23,3 +23,4 @@ test("formatTaskStatusLabel and formatPriorityLabel render Vietnamese administra
   assert.equal(formatTaskStatusLabel("hoan_thanh"), "Hoàn thành");
   assert.equal(formatPriorityLabel("khan"), "Khẩn");
 });
+

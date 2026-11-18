@@ -59,3 +59,4 @@ test("session manager rotates session ID cleanly on wipe", () => {
   assert.notEqual(first, second);
   assert.equal(mgr.getOrInitSessionId(), second);
 });
+

@@ -80,3 +80,4 @@ export function setActiveActorEmail(email: string): void {
   window.localStorage.setItem(ACTOR_KEY, cleaned);
   window.dispatchEvent(new CustomEvent("ubnd-actor-changed", { detail: cleaned }));
 }
+

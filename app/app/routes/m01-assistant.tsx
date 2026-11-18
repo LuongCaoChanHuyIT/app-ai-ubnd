@@ -24,6 +24,7 @@ import {
   type SessionState,
 } from "~/lib/api";
 import { ASSISTANT_MODES, DEPARTMENT_STARTERS } from "~/lib/m01-m02-helpers";
+import { formatAssistantModeBadge } from "~/lib/markdown-helpers";
 import {
   getActiveActorEmail,
   getOrInitSessionId,
@@ -33,6 +34,7 @@ import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Card } from "~/components/ui/card";
+import { FormattedMarkdown } from "~/components/ui/formatted-markdown";
 import { Textarea } from "~/components/ui/textarea";
 import { cn } from "~/lib/utils";
 
@@ -397,14 +399,18 @@ export default function Module01AssistantRoute({
                       )}
                     >
                       {!isUser && (
-                        <div className="mb-1.5 flex items-center gap-2">
-                          <Badge className="bg-blue-600 text-white text-[10px] px-1.5 py-0">
+                        <div className="mb-2 flex items-center gap-2">
+                          <Badge className="bg-blue-600 text-white text-[10px] px-2 py-0">
                             <Sparkles className="h-2.5 w-2.5 mr-1" />
-                            {msg.mode.toUpperCase()}
+                            {formatAssistantModeBadge(msg.mode)}
                           </Badge>
                         </div>
                       )}
-                      {msg.content}
+                      {isUser ? (
+                        msg.content
+                      ) : (
+                        <FormattedMarkdown content={msg.content} />
+                      )}
 
                       {!isUser && msg.citations && msg.citations.length > 0 && (
                         <div className="mt-3 pt-2.5 border-t border-slate-200/80 flex flex-wrap items-center gap-1.5">

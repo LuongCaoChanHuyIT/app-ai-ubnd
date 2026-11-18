@@ -36,6 +36,7 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
+import { FormattedMarkdown } from "~/components/ui/formatted-markdown";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Mô-đun 05 · Tải & Xử lý tài liệu phiên — UBND Xã, Phường" }];
@@ -193,7 +194,7 @@ export default function Module05DocSessionRoute() {
     setBusy(true);
     try {
       await apiRequest(
-        `/api/sessions/${encodeURIComponent(activeSid)}?department_id=${encodeURIComponent(deptId)}`,
+        `/api/sessions/${encodeURIComponent(activeSid)}?department_id=${encodeURIComponent(deptId)}&module_code=M05`,
         {
           method: "DELETE",
           actorEmail: getActiveActorEmail(),
@@ -206,6 +207,11 @@ export default function Module05DocSessionRoute() {
       setBanner({
         tone: "info",
         text: "Đã kết thúc phiên và xóa sạch 100% dữ liệu tài liệu tạm trên bộ nhớ RAM.",
+      });
+    } catch (err) {
+      setBanner({
+        tone: "error",
+        text: err instanceof Error ? err.message : "Không thể xóa bộ nhớ phiên",
       });
     } finally {
       setBusy(false);
@@ -384,8 +390,8 @@ export default function Module05DocSessionRoute() {
                   </div>
                 )}
 
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs sm:text-sm whitespace-pre-wrap leading-relaxed text-slate-800">
-                  {result.result_markdown}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-slate-800">
+                  <FormattedMarkdown content={result.result_markdown} />
                 </div>
               </div>
             )}

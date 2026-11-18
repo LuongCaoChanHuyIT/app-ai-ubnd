@@ -148,6 +148,15 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
   const [connKey, setConnKey] = useState("");
   const [connActive, setConnActive] = useState(firstConnector?.active ?? false);
 
+  useEffect(() => {
+    if (firstConnector) {
+      setConnName(firstConnector.name);
+      setConnUrl(firstConnector.base_url);
+      setConnModel(firstConnector.model_name);
+      setConnActive(firstConnector.active);
+    }
+  }, [firstConnector]);
+
   // Clone Tenant state
   const [communeName, setCommuneName] = useState("UBND Phường Hòa Xuân");
   const [communeAdmin, setCommuneAdmin] = useState("admin.hoaxuan@ubnd.gov.vn");
@@ -490,6 +499,7 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                               type="button"
                               variant="ghost"
                               size="sm"
+                              aria-label={`Thu hồi quyền của ${u.email}`}
                               disabled={busy}
                               onClick={() => void handleDeleteUser(u.id)}
                               className="h-7 px-2 text-rose-600 hover:text-rose-700"
@@ -611,6 +621,7 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                   </label>
                   <Input
                     type="password"
+                    autoComplete="new-password"
                     value={connKey}
                     onChange={(e) => setConnKey(e.target.value)}
                     placeholder="sk-..."
