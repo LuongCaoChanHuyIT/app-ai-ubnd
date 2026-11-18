@@ -6,6 +6,8 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.db import init_db
+from backend.routers.docs_and_files import router as docs_and_files_router
+from backend.routers.ops_and_admin import router as ops_and_admin_router
 from backend.routers.workspace import router as workspace_router
 
 
@@ -35,6 +37,8 @@ app.add_middleware(
 )
 
 app.include_router(workspace_router)
+app.include_router(docs_and_files_router)
+app.include_router(ops_and_admin_router)
 
 
 @app.get("/api/health")
