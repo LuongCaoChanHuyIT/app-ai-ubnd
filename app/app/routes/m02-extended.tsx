@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useEffect, useState } from "react";
+import { useNavigate, useOutletContext, useSearchParams } from "react-router";
 import {
   AlertTriangle,
   ArrowRight,
@@ -14,9 +14,9 @@ import {
   normalizeDepartmentId,
   type DepartmentId,
   type ExtendedAnalyzeResponse,
+  type WorkspaceOutletContext,
 } from "~/lib/api";
 import { buildM03HandoffUrl } from "~/lib/m01-m02-helpers";
-import { getActiveActorEmail } from "~/lib/session";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -28,10 +28,11 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
+import { FormattedMarkdown } from "~/components/ui/formatted-markdown";
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
 
-export function meta({ }: Route.MetaArgs) {
+export function meta({}: Route.MetaArgs) {
   return [{ title: "Mô-đun 02 · AI kiến thức mở rộng — UBND Xã, Phường" }];
 }
 
@@ -45,7 +46,12 @@ const SAMPLE_TOPICS: Record<DepartmentId, string> = {
 export default function Module02ExtendedRoute() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const deptId = normalizeDepartmentId(searchParams.get("dept"));
+  const outlet = useOutletContext<WorkspaceOutletContext | undefined>();
+  const rawDept = normalizeDepartmentId(searchParams.get("dept"));
+  const deptId =
+    outlet?.currentUser?.role === "officer"
+      ? outlet.currentUser.department_id
+      : rawDept;
 
   const [topic, setTopic] = useState(SAMPLE_TOPICS[deptId]);
   const [context, setContext] = useState(
@@ -55,6 +61,11 @@ export default function Module02ExtendedRoute() {
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<ExtendedAnalyzeResponse | null>(null);
 
+  useEffect(() => {
+    setTopic(SAMPLE_TOPICS[deptId]);
+    setAnalysis(null);
+  }, [deptId]);
+
   async function handleAnalyze(ev?: React.FormEvent) {
     ev?.preventDefault();
     if (!topic.trim() || loading) return;
@@ -63,7 +74,6 @@ export default function Module02ExtendedRoute() {
     try {
       const res = await apiRequest<ExtendedAnalyzeResponse>("/api/m02/analyze", {
         method: "POST",
-        actorEmail: getActiveActorEmail(),
         body: {
           department_id: deptId,
           topic: topic.trim(),
@@ -95,7 +105,7 @@ export default function Module02ExtendedRoute() {
       <Card className="border-slate-200 shadow-xs">
         <CardHeader>
           <CardTitle className="text-lg">
-            Đặt chủ đề nghiên cứu & gợi mở đa phương án
+            Đặt chủ đề nghiên cứu & gợi mở đa phương án ({deptId})
           </CardTitle>
           <CardDescription>
             AI sẽ phân tích 03 phương án độc lập (Ưu điểm, Hạn chế, Tính khả thi cấp
@@ -159,69 +169,90 @@ export default function Module02ExtendedRoute() {
       </Card>
 
       {analysis && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {analysis.options.map((opt, idx) => (
-            <Card
-              key={opt.code}
-              className={
-                idx === 2
-                  ? "border-indigo-400 ring-1 ring-indigo-400/30 flex flex-col"
-                  : "border-slate-200 flex flex-col"
-              }
-            >
-              <CardHeader className="pb-3 space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <Badge className="bg-indigo-600 text-white">{opt.code}</Badge>
-                  <Badge variant="outline" className="text-[11px] border-emerald-300 text-emerald-700 bg-emerald-50">
-                    {opt.feasibility}
-                  </Badge>
-                </div>
-                <CardTitle className="text-base leading-snug">
-                  {opt.title}
-                </CardTitle>
-                <CardDescription className="text-xs leading-relaxed">
-                  {opt.summary}
-                </CardDescription>
-              </CardHeader>
+        <div className="space-y-4">
+          {analysis.scope_notice && (
+            <div className="rounded-lg border border-indigo-200 bg-white px-4 py-2.5">
+              <FormattedMarkdown
+                content={analysis.scope_notice}
+                className="text-xs text-slate-700"
+              />
+            </div>
+          )}
 
-              <CardContent className="flex-1 space-y-3 text-xs">
-                <div className="space-y-1.5">
-                  <p className="font-semibold text-emerald-700">Ưu điểm nổi bật:</p>
-                  {opt.pros.map((pro) => (
-                    <div key={pro} className="flex items-start gap-1.5 text-slate-700">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                      <span>{pro}</span>
-                    </div>
-                  ))}
-                </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {analysis.options.map((opt, idx) => (
+              <Card
+                key={opt.code}
+                className={
+                  idx === 2
+                    ? "border-indigo-400 ring-1 ring-indigo-400/30 flex flex-col"
+                    : "border-slate-200 flex flex-col"
+                }
+              >
+                <CardHeader className="pb-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <Badge className="bg-indigo-600 text-white">{opt.code}</Badge>
+                    <Badge
+                      variant="outline"
+                      className="text-[11px] border-emerald-300 text-emerald-700 bg-emerald-50"
+                    >
+                      {opt.feasibility}
+                    </Badge>
+                  </div>
+                  <CardTitle className="text-base leading-snug">
+                    {opt.title}
+                  </CardTitle>
+                  <div className="text-xs text-slate-600">
+                    <FormattedMarkdown
+                      content={opt.summary}
+                      className="text-xs text-slate-600"
+                    />
+                  </div>
+                </CardHeader>
 
-                <div className="space-y-1.5">
-                  <p className="font-semibold text-amber-700">Lưu ý / Hạn chế:</p>
-                  {opt.cons.map((con) => (
-                    <div key={con} className="flex items-start gap-1.5 text-slate-700">
-                      <MinusCircle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
-                      <span>{con}</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
+                <CardContent className="flex-1 space-y-3 text-xs">
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-emerald-700">Ưu điểm nổi bật:</p>
+                    {opt.pros.map((pro) => (
+                      <div key={pro} className="flex items-start gap-1.5 text-slate-700">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                        <div className="min-w-0 flex-1">
+                          <FormattedMarkdown content={pro} className="text-xs" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
 
-              <CardFooter className="border-t pt-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    navigate(buildM03HandoffUrl(deptId, analysis.topic, opt))
-                  }
-                  className="w-full gap-1.5 text-xs border-indigo-200 text-indigo-700 hover:bg-indigo-50"
-                >
-                  Chuyển sang dự thảo Kế hoạch
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </Button>
-              </CardFooter>
-            </Card>
-          ))}
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-amber-700">Lưu ý / Hạn chế:</p>
+                    {opt.cons.map((con) => (
+                      <div key={con} className="flex items-start gap-1.5 text-slate-700">
+                        <MinusCircle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
+                        <div className="min-w-0 flex-1">
+                          <FormattedMarkdown content={con} className="text-xs" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+
+                <CardFooter className="border-t pt-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      navigate(buildM03HandoffUrl(deptId, analysis.topic, opt))
+                    }
+                    className="w-full gap-1.5 text-xs border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                  >
+                    Chuyển sang dự thảo Kế hoạch
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Button>
+                </CardFooter>
+              </Card>
+            ))}
+          </div>
         </div>
       )}
     </div>

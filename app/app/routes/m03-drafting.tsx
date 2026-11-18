@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router";
+import { useNavigate, useOutletContext, useSearchParams } from "react-router";
 import {
   AlertTriangle,
   CheckCircle2,
+  CheckSquare,
   Copy,
   Download,
   FileCheck2,
@@ -14,9 +15,16 @@ import {
   apiRequest,
   normalizeDepartmentId,
   type AuditReport,
+  type AuthorityMode,
+  type WorkspaceOutletContext,
 } from "~/lib/api";
-import { ADMIN_DOC_TYPES, formatAuditStatusLabel } from "~/lib/m03-m05-helpers";
-import { getActiveActorEmail } from "~/lib/session";
+import {
+  ADMIN_DOC_TYPES,
+  AUTHORITY_MODES,
+  applyAuthoritySignerOverride,
+  buildM06TaskHandoffUrl,
+  formatAuditStatusLabel,
+} from "~/lib/m03-m05-helpers";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -38,24 +46,34 @@ import {
 import { Textarea } from "~/components/ui/textarea";
 import { cn } from "~/lib/utils";
 
-export function meta({ }: Route.MetaArgs) {
+export function meta({}: Route.MetaArgs) {
   return [{ title: "Mô-đun 03 · Soạn thảo & Kiểm tra văn bản — UBND Xã, Phường" }];
 }
 
 export default function Module03DraftingRoute() {
   const [searchParams] = useSearchParams();
-  const deptId = normalizeDepartmentId(searchParams.get("dept"));
+  const navigate = useNavigate();
+  const outlet = useOutletContext<WorkspaceOutletContext | undefined>();
+  const rawDept = normalizeDepartmentId(searchParams.get("dept"));
+  const deptId =
+    outlet?.currentUser?.role === "officer"
+      ? outlet.currentUser.department_id
+      : rawDept;
 
   const [docType, setDocType] = useState<string>(
     searchParams.get("docType") ?? "Kế hoạch",
   );
+  const [authorityMode, setAuthorityMode] = useState<AuthorityMode>("auto");
+  const [recipient, setRecipient] = useState<string>(
+    "Các bộ phận chuyên môn trực thuộc UBND",
+  );
   const [title, setTitle] = useState<string>(
     searchParams.get("title") ??
-    "Triển khai chuẩn hóa giải quyết thủ tục hành chính quý IV/2026",
+      "Triển khai chuẩn hóa giải quyết thủ tục hành chính quý IV/2026",
   );
   const [keyPoints, setKeyPoints] = useState<string>(
     searchParams.get("points") ??
-    "Rà soát quy trình tiếp nhận hồ sơ tại Bộ phận Một cửa; Tăng cường số hóa hồ sơ theo Nghị định 399/2026/NĐ-CP; Phân công rõ đầu mối phụ trách từng lĩnh vực",
+      "Rà soát quy trình tiếp nhận hồ sơ tại Bộ phận Một cửa; Tăng cường số hóa hồ sơ theo Nghị định 61/2018/NĐ-CP và Nghị định 107/2021/NĐ-CP; Phân công rõ đầu mối phụ trách từng lĩnh vực",
   );
   const [draftText, setDraftText] = useState<string>("");
   const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
@@ -73,6 +91,13 @@ export default function Module03DraftingRoute() {
     if (pts) setKeyPoints(pts);
   }, [searchParams]);
 
+  function handleAuthorityChange(nextMode: AuthorityMode) {
+    setAuthorityMode(nextMode);
+    if (draftText.trim() && nextMode !== "auto") {
+      setDraftText((prev) => applyAuthoritySignerOverride(prev, nextMode));
+    }
+  }
+
   async function handleGenerateDraft() {
     if (!title.trim() || busyDraft) return;
     setBusyDraft(true);
@@ -80,22 +105,24 @@ export default function Module03DraftingRoute() {
     try {
       const res = await apiRequest<{ draft_text: string }>("/api/m03/draft", {
         method: "POST",
-        actorEmail: getActiveActorEmail(),
         body: {
           department_id: deptId,
           doc_type: docType,
           title: title.trim(),
           key_points: keyPoints.trim(),
+          recipient: recipient.trim() || "Các bộ phận chuyên môn trực thuộc UBND",
+          authority_mode: authorityMode,
         },
       });
-      setDraftText(res.draft_text);
+      const finalDraft = res.draft_text;
+      setDraftText(finalDraft);
+
       const audit = await apiRequest<AuditReport>("/api/m03/audit", {
         method: "POST",
-        actorEmail: getActiveActorEmail(),
         body: {
           department_id: deptId,
           doc_type: docType,
-          draft_text: res.draft_text,
+          draft_text: finalDraft,
         },
       });
       setAuditReport(audit);
@@ -113,7 +140,6 @@ export default function Module03DraftingRoute() {
     try {
       const audit = await apiRequest<AuditReport>("/api/m03/audit", {
         method: "POST",
-        actorEmail: getActiveActorEmail(),
         body: {
           department_id: deptId,
           doc_type: docType,
@@ -146,6 +172,17 @@ export default function Module03DraftingRoute() {
     URL.revokeObjectURL(url);
   }
 
+  function handleHandoffToM06() {
+    navigate(
+      buildM06TaskHandoffUrl({
+        deptId,
+        title: `Triển khai ${docType}: ${title.trim()}`,
+        desc: keyPoints.trim(),
+        ref: `Dự thảo ${docType} (${deptId})`,
+      }),
+    );
+  }
+
   return (
     <div className="mx-auto max-w-7xl grid grid-cols-1 xl:grid-cols-12 gap-5">
       {/* Left Column: Administrative Drafting Editor */}
@@ -160,14 +197,14 @@ export default function Module03DraftingRoute() {
                 Soạn mới & Chuẩn hóa theo Nghị định 30/2020/NĐ-CP
               </CardTitle>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 disabled={!draftText}
                 onClick={() => void handleCopy()}
-                className="gap-1.5 text-xs"
+                className="gap-1.5 text-xs whitespace-nowrap"
               >
                 <Copy className="h-3.5 w-3.5" />
                 {copied ? "Đã sao chép" : "Sao chép"}
@@ -178,27 +215,41 @@ export default function Module03DraftingRoute() {
                 size="sm"
                 disabled={!draftText}
                 onClick={handleDownload}
-                className="gap-1.5 text-xs"
+                className="gap-1.5 text-xs whitespace-nowrap"
               >
                 <Download className="h-3.5 w-3.5" />
                 Tải dự thảo
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!title.trim()}
+                onClick={handleHandoffToM06}
+                className="gap-1.5 text-xs border-blue-200 bg-blue-50/70 text-blue-700 hover:bg-blue-100 whitespace-nowrap"
+              >
+                <CheckSquare className="h-3.5 w-3.5" />
+                Chuyển giao việc (Mô-đun 06)
+              </Button>
             </div>
           </div>
           <CardDescription className="text-xs">
-            Chọn loại văn bản, nhập trích yếu và các ý chính để hình thành nhanh dự
-            thảo hành chính hoặc dán dự thảo có sẵn để AI kiểm tra 5 tiêu chí.
+            Chọn loại văn bản, thẩm quyền ký ban hành và nhập trích yếu để hình
+            thành dự thảo chuẩn NĐ 30/2020/NĐ-CP hoặc dán dự thảo để kiểm tra 5 tiêu chí.
           </CardDescription>
         </CardHeader>
 
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-700">
-                Loại văn bản
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            <div className="space-y-1.5 min-w-0">
+              <label className="block text-xs font-semibold text-slate-700">
+                Loại văn bản hành chính
               </label>
               <Select value={docType} onValueChange={setDocType}>
-                <SelectTrigger aria-label="Loại văn bản hành chính">
+                <SelectTrigger
+                  aria-label="Loại văn bản hành chính"
+                  className="w-full min-w-0"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -211,8 +262,34 @@ export default function Module03DraftingRoute() {
               </Select>
             </div>
 
-            <div className="sm:col-span-2 space-y-1">
-              <label className="text-xs font-semibold text-slate-700">
+            <div className="space-y-1.5 min-w-0">
+              <label className="block text-xs font-semibold text-slate-700">
+                Thẩm quyền ký ban hành
+              </label>
+              <Select
+                value={authorityMode}
+                onValueChange={(v) => handleAuthorityChange(v as AuthorityMode)}
+              >
+                <SelectTrigger
+                  aria-label="Thẩm quyền ký ban hành"
+                  className="w-full min-w-0"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {AUTHORITY_MODES.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+            <div className="sm:col-span-2 space-y-1.5 min-w-0">
+              <label className="block text-xs font-semibold text-slate-700">
                 Trích yếu nội dung văn bản
               </label>
               <Input
@@ -221,10 +298,21 @@ export default function Module03DraftingRoute() {
                 placeholder="Về việc..."
               />
             </div>
+
+            <div className="space-y-1.5 min-w-0">
+              <label className="block text-xs font-semibold text-slate-700">
+                Nơi nhận chính
+              </label>
+              <Input
+                value={recipient}
+                onChange={(e) => setRecipient(e.target.value)}
+                placeholder="Các bộ phận..."
+              />
+            </div>
           </div>
 
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-700">
+          <div className="space-y-1.5">
+            <label className="block text-xs font-semibold text-slate-700">
               Các ý chính cần đưa vào dự thảo (phân tách bằng dấu chấm phẩy hoặc xuống dòng)
             </label>
             <Textarea
@@ -262,7 +350,7 @@ export default function Module03DraftingRoute() {
           {error && <p className="text-xs font-medium text-rose-600">{error}</p>}
 
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700">
+            <label className="block text-xs font-semibold text-slate-700">
               Nội dung dự thảo văn bản hành chính (có thể chỉnh sửa trực tiếp)
             </label>
             <Textarea
@@ -346,12 +434,12 @@ export default function Module03DraftingRoute() {
                         <Badge
                           variant="outline"
                           className={cn(
-                            "text-[10px] font-semibold",
+                            "text-[10px] font-semibold shrink-0",
                             isPass && "border-emerald-300 text-emerald-700 bg-white",
                             isWarn && "border-amber-300 text-amber-700 bg-white",
                             !isPass &&
-                            !isWarn &&
-                            "border-rose-300 text-rose-700 bg-white",
+                              !isWarn &&
+                              "border-rose-300 text-rose-700 bg-white",
                           )}
                         >
                           {formatAuditStatusLabel(c.status)}

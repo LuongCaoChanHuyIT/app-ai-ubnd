@@ -1,24 +1,38 @@
-import { useState } from "react";
-import { Form, useRevalidator, useSearchParams } from "react-router";
+import { useEffect, useState } from "react";
 import {
+  Form,
+  useOutletContext,
+  useRevalidator,
+  useSearchParams,
+} from "react-router";
+import {
+  AlertTriangle,
   BookOpen,
+  CheckCircle2,
   Eye,
+  Lock,
   Plus,
   RefreshCw,
   Search,
   Shield,
+  XCircle,
 } from "lucide-react";
 import type { Route } from "./+types/m04-official-docs";
 import {
+  ApiError,
   apiRequest,
+  extractServerAuthHeaders,
   normalizeDepartmentId,
   resolveServerApiBase,
   type DocTier,
   type DocUpdateRequest,
+  type DocUpdateReviewResponse,
   type OfficialDoc,
+  type WorkspaceOutletContext,
 } from "~/lib/api";
 import { formatTierLabel } from "~/lib/m03-m05-helpers";
-import { getActiveActorEmail } from "~/lib/session";
+import { normalizeM04Tab } from "~/lib/m06-m07-helpers";
+import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -55,8 +69,9 @@ import {
 } from "~/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { Textarea } from "~/components/ui/textarea";
+import { cn } from "~/lib/utils";
 
-export function meta({ }: Route.MetaArgs) {
+export function meta({}: Route.MetaArgs) {
   return [{ title: "Mô-đun 04 · Nguồn văn bản chính thức — UBND Xã, Phường" }];
 }
 
@@ -66,6 +81,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const q = url.searchParams.get("q") ?? "";
   const tier = url.searchParams.get("tier") ?? "";
   const baseUrl = resolveServerApiBase();
+  const headers = extractServerAuthHeaders(request);
 
   try {
     const params = new URLSearchParams();
@@ -76,10 +92,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     const [docRes, reqRes] = await Promise.all([
       apiRequest<{ documents: OfficialDoc[] }>(
         `/api/m04/documents?${params.toString()}`,
-        { baseUrl },
+        { baseUrl, headers },
       ),
       apiRequest<{ requests: DocUpdateRequest[] }>("/api/m04/update-requests", {
         baseUrl,
+        headers,
       }),
     ]);
 
@@ -89,14 +106,19 @@ export async function loader({ request }: Route.LoaderArgs) {
       tier,
       documents: docRes.documents,
       updateRequests: reqRes.requests,
+      loaderError: null as string | null,
     };
-  } catch {
+  } catch (err) {
     return {
       deptId,
       q,
       tier,
       documents: [] as OfficialDoc[],
       updateRequests: [] as DocUpdateRequest[],
+      loaderError:
+        err instanceof ApiError
+          ? err.message
+          : null,
     };
   }
 }
@@ -106,11 +128,21 @@ export default function Module04OfficialDocsRoute({
 }: Route.ComponentProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const revalidator = useRevalidator();
-  const deptId = normalizeDepartmentId(
+  const outlet = useOutletContext<WorkspaceOutletContext | undefined>();
+
+  const rawDept = normalizeDepartmentId(
     searchParams.get("dept") ?? loaderData.deptId,
   );
-  const activeTab =
-    searchParams.get("tab") === "de-nghi" ? "de-nghi" : "danh-muc";
+  const deptId =
+    outlet?.currentUser?.role === "officer"
+      ? outlet.currentUser.department_id
+      : rawDept;
+
+  const isOwner = (outlet?.currentUser?.role ?? "owner") === "owner";
+  const hasPrivateRepoAccess =
+    isOwner || Boolean(outlet?.currentUser?.private_repo_access ?? true);
+
+  const activeTab = normalizeM04Tab(searchParams.get("tab"));
 
   const [selectedDoc, setSelectedDoc] = useState<OfficialDoc | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -125,12 +157,23 @@ export default function Module04OfficialDocsRoute({
   const [reqTier, setReqTier] = useState<DocTier>("trung_uong");
   const [reqReason, setReqReason] = useState("");
   const [busyReq, setBusyReq] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [reviewingId, setReviewingId] = useState<number | null>(null);
+  const [feedback, setFeedback] = useState<{
+    tone: "ok" | "err";
+    text: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!isOwner) {
+      setDocTier("kho_rieng");
+    }
+  }, [isOwner]);
 
   function setTabParam(nextTab: string) {
+    const normalized = normalizeM04Tab(nextTab);
     const next = new URLSearchParams(searchParams);
     next.set("dept", deptId);
-    if (nextTab === "de-nghi") next.set("tab", "de-nghi");
+    if (normalized === "de_nghi") next.set("tab", "de_nghi");
     else next.delete("tab");
     setSearchParams(next);
   }
@@ -151,13 +194,13 @@ export default function Module04OfficialDocsRoute({
     try {
       await apiRequest("/api/m04/documents", {
         method: "POST",
-        actorEmail: getActiveActorEmail(),
         body: {
           doc_number: docNumber.trim(),
           title: docTitle.trim(),
           doc_type: "Văn bản nội bộ",
-          tier: docTier,
-          department_id: docTier === "kho_rieng" ? deptId : "ALL",
+          tier: isOwner ? docTier : "kho_rieng",
+          department_id:
+            (isOwner ? docTier : "kho_rieng") === "kho_rieng" ? deptId : "ALL",
           issuer: `UBND (${deptId})`,
           issued_date: "2026-11-18",
           summary: docContent.trim().slice(0, 180),
@@ -168,10 +211,16 @@ export default function Module04OfficialDocsRoute({
       setDocTitle("");
       setDocContent("");
       setAddOpen(false);
-      setFeedback("Đã bổ sung văn bản mới vào kho dữ liệu.");
+      setFeedback({
+        tone: "ok",
+        text: "Đã bổ sung văn bản mới vào kho dữ liệu thành công.",
+      });
       revalidator.revalidate();
     } catch (err) {
-      setFeedback(err instanceof Error ? err.message : "Không thể thêm văn bản");
+      setFeedback({
+        tone: "err",
+        text: err instanceof Error ? err.message : "Không thể thêm văn bản",
+      });
     } finally {
       setBusyAdd(false);
     }
@@ -185,26 +234,108 @@ export default function Module04OfficialDocsRoute({
     try {
       await apiRequest("/api/m04/update-requests", {
         method: "POST",
-        actorEmail: getActiveActorEmail(),
         body: {
           doc_number: reqNumber.trim(),
           title: reqTitle.trim(),
           tier: reqTier,
           department_id: deptId,
           reason: reqReason.trim(),
-          requested_by: getActiveActorEmail(),
         },
       });
       setReqNumber("");
       setReqTitle("");
       setReqReason("");
-      setFeedback("Đã gửi đề nghị cập nhật văn bản thành công.");
+      setFeedback({
+        tone: "ok",
+        text: "Đã gửi đề nghị cập nhật văn bản thành công; đang chờ Chủ sở hữu phê duyệt.",
+      });
       revalidator.revalidate();
     } catch (err) {
-      setFeedback(err instanceof Error ? err.message : "Không thể gửi đề nghị");
+      setFeedback({
+        tone: "err",
+        text: err instanceof Error ? err.message : "Không thể gửi đề nghị",
+      });
     } finally {
       setBusyReq(false);
     }
+  }
+
+  async function handleReviewRequest(
+    reqItem: DocUpdateRequest,
+    decision: "da_duyet" | "tu_choi",
+  ) {
+    setReviewingId(reqItem.id);
+    setFeedback(null);
+    try {
+      await apiRequest<DocUpdateReviewResponse>(
+        `/api/m04/update-requests/${reqItem.id}/review`,
+        {
+          method: "PATCH",
+          body:
+            decision === "da_duyet"
+              ? {
+                  status: "da_duyet",
+                  issuer:
+                    reqItem.tier === "trung_uong"
+                      ? "Cơ quan Trung ương"
+                      : `UBND (${reqItem.department_id})`,
+                  issued_date: "2026-11-18",
+                  doc_type: "Văn bản cập nhật",
+                  summary: reqItem.reason,
+                  content: `${reqItem.title}. Nội dung cập nhật theo đề nghị của phòng ${reqItem.department_id}: ${reqItem.reason}`,
+                }
+              : {
+                  status: "tu_choi",
+                },
+        },
+      );
+      setFeedback({
+        tone: "ok",
+        text:
+          decision === "da_duyet"
+            ? `Đã phê duyệt đề nghị '${reqItem.doc_number}' và tự động nhập kho văn bản chính thức.`
+            : `Đã từ chối đề nghị cập nhật '${reqItem.doc_number}'.`,
+      });
+      revalidator.revalidate();
+    } catch (err) {
+      setFeedback({
+        tone: "err",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Không thể xử lý phê duyệt đề nghị cập nhật",
+      });
+    } finally {
+      setReviewingId(null);
+    }
+  }
+
+  function renderRequestStatusBadge(r: DocUpdateRequest) {
+    if (r.status === "da_duyet") {
+      return (
+        <Badge className="bg-emerald-600 text-white text-[10px] whitespace-nowrap">
+          Đã duyệt & Nhập kho · {r.department_id}
+        </Badge>
+      );
+    }
+    if (r.status === "tu_choi") {
+      return (
+        <Badge
+          variant="outline"
+          className="border-rose-300 bg-rose-50 text-rose-700 text-[10px] whitespace-nowrap"
+        >
+          Đã từ chối · {r.department_id}
+        </Badge>
+      );
+    }
+    return (
+      <Badge
+        variant="outline"
+        className="border-amber-300 bg-amber-50 text-amber-800 text-[10px] whitespace-nowrap"
+      >
+        Chờ duyệt · {r.department_id}
+      </Badge>
+    );
   }
 
   return (
@@ -221,87 +352,180 @@ export default function Module04OfficialDocsRoute({
 
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
           <DialogTrigger asChild>
-            <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5">
+            <Button
+              size="sm"
+              className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+            >
               <Plus className="h-4 w-4" />
               Bổ sung văn bản vào kho
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>Bổ sung văn bản vào kho ({deptId})</DialogTitle>
               <DialogDescription>
-                Văn bản thuộc &ldquo;Kho dữ liệu riêng&rdquo; sẽ được cô lập theo đúng
-                phòng chuyên môn {deptId}.
+                {isOwner
+                  ? `Quản trị viên có thể bổ sung trực tiếp văn bản Trung ương, Địa phương hoặc Kho dữ liệu riêng phòng ${deptId}.`
+                  : `Cán bộ chuyên môn bổ sung tài liệu vào Kho dữ liệu riêng của phòng ${deptId}; với văn bản Trung ương/Địa phương vui lòng gửi Đề nghị cập nhật.`}
               </DialogDescription>
             </DialogHeader>
-            <form onSubmit={handleCreateDoc} className="space-y-3">
-              <Input
-                value={docNumber}
-                onChange={(e) => setDocNumber(e.target.value)}
-                placeholder="Số hiệu (VD: QC-05/2026/UBND-VP)"
-                required
-              />
-              <Input
-                value={docTitle}
-                onChange={(e) => setDocTitle(e.target.value)}
-                placeholder="Trích yếu văn bản..."
-                required
-              />
-              <Select
-                value={docTier}
-                onValueChange={(v) => setDocTier(v as DocTier)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="kho_rieng">
-                    Kho dữ liệu riêng phòng {deptId}
-                  </SelectItem>
-                  <SelectItem value="dia_phuong">Văn bản Địa phương</SelectItem>
-                  <SelectItem value="trung_uong">Văn bản Trung ương</SelectItem>
-                </SelectContent>
-              </Select>
-              <Textarea
-                rows={4}
-                value={docContent}
-                onChange={(e) => setDocContent(e.target.value)}
-                placeholder="Nội dung điều khoản cốt lõi phục vụ AI tra cứu..."
-                required
-              />
-              <DialogFooter>
-                <Button type="submit" disabled={busyAdd}>
-                  {busyAdd ? "Đang lưu..." : "Lưu văn bản"}
-                </Button>
-              </DialogFooter>
-            </form>
+
+            {!hasPrivateRepoAccess ? (
+              <div className="space-y-3">
+                <Alert variant="destructive">
+                  <Lock className="h-4 w-4" />
+                  <AlertDescription className="text-xs">
+                    Tài khoản hiện tại không được cấp quyền ghi vào Kho dữ liệu
+                    riêng của phòng {deptId}. Vui lòng chuyển sang tab{" "}
+                    <strong>Đề nghị cập nhật văn bản</strong> để gửi yêu cầu tới Quản
+                    trị viên.
+                  </AlertDescription>
+                </Alert>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setAddOpen(false);
+                      setTabParam("de_nghi");
+                    }}
+                  >
+                    Mở tab Đề nghị cập nhật
+                  </Button>
+                </DialogFooter>
+              </div>
+            ) : (
+              <form onSubmit={handleCreateDoc} className="space-y-3">
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Số hiệu văn bản
+                  </label>
+                  <Input
+                    value={docNumber}
+                    onChange={(e) => setDocNumber(e.target.value)}
+                    placeholder="VD: QC-05/2026/UBND-VP"
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Trích yếu văn bản
+                  </label>
+                  <Input
+                    value={docTitle}
+                    onChange={(e) => setDocTitle(e.target.value)}
+                    placeholder="Trích yếu văn bản..."
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Phân tầng nguồn kho
+                  </label>
+                  <Select
+                    value={isOwner ? docTier : "kho_rieng"}
+                    onValueChange={(v) => setDocTier(v as DocTier)}
+                    disabled={!isOwner}
+                  >
+                    <SelectTrigger className="w-full min-w-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="kho_rieng">
+                        Kho dữ liệu riêng phòng {deptId}
+                      </SelectItem>
+                      {isOwner && (
+                        <>
+                          <SelectItem value="dia_phuong">
+                            Văn bản Địa phương (Toàn UBND)
+                          </SelectItem>
+                          <SelectItem value="trung_uong">
+                            Văn bản Trung ương (Toàn UBND)
+                          </SelectItem>
+                        </>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Nội dung trích lục phục vụ tra cứu AI
+                  </label>
+                  <Textarea
+                    rows={4}
+                    value={docContent}
+                    onChange={(e) => setDocContent(e.target.value)}
+                    placeholder="Nội dung điều khoản cốt lõi phục vụ AI tra cứu..."
+                    required
+                  />
+                </div>
+                <DialogFooter>
+                  <Button type="submit" disabled={busyAdd}>
+                    {busyAdd ? "Đang lưu..." : "Lưu văn bản"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            )}
           </DialogContent>
         </Dialog>
       </div>
 
+      {!hasPrivateRepoAccess && (
+        <Alert className="border-amber-300 bg-amber-50 text-amber-950 py-2.5">
+          <Lock className="h-4 w-4 text-amber-700" />
+          <AlertDescription className="text-xs">
+            Tài khoản cán bộ hiện tại đang bị giới hạn quyền truy cập{" "}
+            <strong>Kho dữ liệu riêng</strong> của phòng {deptId} — danh mục chỉ hiển
+            thị văn bản Trung ương và Địa phương dùng chung.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {loaderData.loaderError && (
+        <Alert variant="destructive" className="py-2.5">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription className="text-xs">
+            {loaderData.loaderError}
+          </AlertDescription>
+        </Alert>
+      )}
+
       {feedback && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-medium text-blue-900">
-          {feedback}
-        </div>
+        <Alert
+          variant={feedback.tone === "err" ? "destructive" : "default"}
+          className={cn(
+            "py-2.5",
+            feedback.tone === "ok" &&
+              "border-emerald-200 bg-emerald-50 text-emerald-900",
+          )}
+        >
+          <AlertDescription className="text-xs flex items-center gap-1.5">
+            {feedback.tone === "ok" ? (
+              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+            )}
+            {feedback.text}
+          </AlertDescription>
+        </Alert>
       )}
 
       <Tabs value={activeTab} onValueChange={setTabParam}>
-        <TabsList>
-          <TabsTrigger value="danh-muc" className="gap-1.5">
+        <TabsList className="flex flex-wrap h-auto">
+          <TabsTrigger value="danh_muc" className="gap-1.5 text-xs sm:text-sm">
             <BookOpen className="h-3.5 w-3.5" />
             Danh mục văn bản ({loaderData.documents.length})
           </TabsTrigger>
-          <TabsTrigger value="de-nghi" className="gap-1.5">
+          <TabsTrigger value="de_nghi" className="gap-1.5 text-xs sm:text-sm">
             <RefreshCw className="h-3.5 w-3.5" />
             Đề nghị cập nhật văn bản ({loaderData.updateRequests.length})
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="danh-muc" className="space-y-4 pt-3">
+        <TabsContent value="danh_muc" className="space-y-4 pt-3">
           <Card className="border-slate-200 shadow-xs">
             <CardContent className="pt-5 space-y-4">
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                <Form method="get" className="flex flex-1 gap-2">
+                <Form method="get" className="flex flex-1 gap-2 min-w-0">
                   <input type="hidden" name="dept" value={deptId} />
                   {loaderData.tier && (
                     <input type="hidden" name="tier" value={loaderData.tier} />
@@ -310,9 +534,13 @@ export default function Module04OfficialDocsRoute({
                     name="q"
                     defaultValue={loaderData.q}
                     placeholder="Tìm theo số hiệu (VD: 30/2020/NĐ-CP, 399/2026/NĐ-CP) hoặc trích yếu..."
-                    className="flex-1"
+                    className="flex-1 min-w-0"
                   />
-                  <Button type="submit" variant="secondary" className="gap-1.5">
+                  <Button
+                    type="submit"
+                    variant="secondary"
+                    className="gap-1.5 whitespace-nowrap"
+                  >
                     <Search className="h-4 w-4" />
                     Tra cứu
                   </Button>
@@ -333,7 +561,7 @@ export default function Module04OfficialDocsRoute({
                         (loaderData.tier || "all") === t.id ? "default" : "outline"
                       }
                       onClick={() => setTierFilter(t.id)}
-                      className="text-xs h-8"
+                      className="text-xs h-8 whitespace-nowrap"
                     >
                       {t.label}
                     </Button>
@@ -345,64 +573,75 @@ export default function Module04OfficialDocsRoute({
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-slate-50">
-                      <TableHead className="w-[150px]">Số hiệu</TableHead>
+                      <TableHead className="w-[140px]">Số hiệu</TableHead>
                       <TableHead>Trích yếu & Tóm tắt</TableHead>
-                      <TableHead className="w-[150px]">Nguồn kho</TableHead>
+                      <TableHead className="w-[145px]">Nguồn kho</TableHead>
                       <TableHead className="w-[110px]">Phạm vi</TableHead>
                       <TableHead className="w-[90px] text-right">Chi tiết</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {loaderData.documents.map((doc) => (
-                      <TableRow key={doc.id}>
-                        <TableCell className="font-semibold text-blue-700 text-xs">
-                          {doc.doc_number}
-                          <div className="text-[11px] font-normal text-slate-400">
-                            {doc.issued_date}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <p className="font-semibold text-xs text-slate-900">
-                            {doc.title}
-                          </p>
-                          <p className="text-xs text-slate-500 line-clamp-2 mt-0.5">
-                            {doc.summary}
-                          </p>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={
-                              doc.tier === "kho_rieng"
-                                ? "border-amber-300 bg-amber-50 text-amber-800 text-[11px]"
-                                : "border-blue-200 bg-blue-50 text-blue-700 text-[11px]"
-                            }
-                          >
-                            {formatTierLabel(doc.tier)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          <span className="inline-flex items-center gap-1 font-medium text-slate-700">
-                            <Shield className="h-3 w-3 text-slate-400" />
-                            {doc.department_id === "ALL"
-                              ? "Toàn UBND"
-                              : `Phòng ${doc.department_id}`}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setSelectedDoc(doc)}
-                            className="h-7 px-2 text-xs gap-1"
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                            Xem
-                          </Button>
+                    {loaderData.documents.length === 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={5}
+                          className="py-8 text-center text-xs text-slate-500 whitespace-normal"
+                        >
+                          Không tìm thấy văn bản nào khớp với bộ lọc hiện tại.
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ) : (
+                      loaderData.documents.map((doc) => (
+                        <TableRow key={doc.id}>
+                          <TableCell className="font-semibold text-blue-700 text-xs whitespace-nowrap align-top">
+                            {doc.doc_number}
+                            <div className="text-[11px] font-normal text-slate-400">
+                              {doc.issued_date}
+                            </div>
+                          </TableCell>
+                          <TableCell className="whitespace-normal min-w-[240px] align-top">
+                            <p className="font-semibold text-xs text-slate-900">
+                              {doc.title}
+                            </p>
+                            <p className="text-xs text-slate-500 line-clamp-2 mt-0.5">
+                              {doc.summary}
+                            </p>
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap align-top">
+                            <Badge
+                              variant="outline"
+                              className={
+                                doc.tier === "kho_rieng"
+                                  ? "border-amber-300 bg-amber-50 text-amber-800 text-[11px]"
+                                  : "border-blue-200 bg-blue-50 text-blue-700 text-[11px]"
+                              }
+                            >
+                              {formatTierLabel(doc.tier)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs whitespace-nowrap align-top">
+                            <span className="inline-flex items-center gap-1 font-medium text-slate-700">
+                              <Shield className="h-3 w-3 text-slate-400 shrink-0" />
+                              {doc.department_id === "ALL"
+                                ? "Toàn UBND"
+                                : `Phòng ${doc.department_id}`}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right whitespace-nowrap align-top">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setSelectedDoc(doc)}
+                              className="h-7 px-2 text-xs gap-1 whitespace-nowrap"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              Xem
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
               </div>
@@ -410,7 +649,10 @@ export default function Module04OfficialDocsRoute({
           </Card>
         </TabsContent>
 
-        <TabsContent value="de-nghi" className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-3">
+        <TabsContent
+          value="de_nghi"
+          className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-3"
+        >
           <Card className="lg:col-span-5 border-slate-200 shadow-xs h-fit">
             <CardHeader>
               <CardTitle className="text-base">
@@ -418,43 +660,65 @@ export default function Module04OfficialDocsRoute({
               </CardTitle>
               <CardDescription className="text-xs">
                 Khi phát hiện văn bản mới ban hành hoặc hết hiệu lực, cán bộ gửi đề
-                nghị để Quản trị viên cập nhật vào nguồn chính thức.
+                nghị để Quản trị viên phê duyệt và nhập vào nguồn chính thức.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmitUpdateRequest} className="space-y-3">
-                <Input
-                  value={reqNumber}
-                  onChange={(e) => setReqNumber(e.target.value)}
-                  placeholder="Số hiệu văn bản (VD: 12/2026/TT-BNV)"
-                  required
-                />
-                <Input
-                  value={reqTitle}
-                  onChange={(e) => setReqTitle(e.target.value)}
-                  placeholder="Tên / Trích yếu văn bản cần cập nhật"
-                  required
-                />
-                <Select
-                  value={reqTier}
-                  onValueChange={(v) => setReqTier(v as DocTier)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="trung_uong">Văn bản Trung ương</SelectItem>
-                    <SelectItem value="dia_phuong">Văn bản Địa phương</SelectItem>
-                    <SelectItem value="kho_rieng">Kho dữ liệu riêng</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Textarea
-                  rows={3}
-                  value={reqReason}
-                  onChange={(e) => setReqReason(e.target.value)}
-                  placeholder="Lý do cập nhật / thay thế điều khoản nào..."
-                  required
-                />
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Số hiệu văn bản đề nghị
+                  </label>
+                  <Input
+                    value={reqNumber}
+                    onChange={(e) => setReqNumber(e.target.value)}
+                    placeholder="VD: 12/2026/TT-BNV"
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Tên / Trích yếu văn bản
+                  </label>
+                  <Input
+                    value={reqTitle}
+                    onChange={(e) => setReqTitle(e.target.value)}
+                    placeholder="Tên / Trích yếu văn bản cần cập nhật"
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Phân tầng đề xuất
+                  </label>
+                  <Select
+                    value={reqTier}
+                    onValueChange={(v) => setReqTier(v as DocTier)}
+                  >
+                    <SelectTrigger className="w-full min-w-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="trung_uong">Văn bản Trung ương</SelectItem>
+                      <SelectItem value="dia_phuong">Văn bản Địa phương</SelectItem>
+                      <SelectItem value="kho_rieng">
+                        Kho dữ liệu riêng ({deptId})
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Lý do cập nhật / Tóm tắt điểm mới
+                  </label>
+                  <Textarea
+                    rows={3}
+                    value={reqReason}
+                    onChange={(e) => setReqReason(e.target.value)}
+                    placeholder="Lý do cập nhật / thay thế điều khoản nào..."
+                    required
+                  />
+                </div>
                 <Button
                   type="submit"
                   disabled={busyReq}
@@ -469,8 +733,13 @@ export default function Module04OfficialDocsRoute({
           <Card className="lg:col-span-7 border-slate-200 shadow-xs">
             <CardHeader>
               <CardTitle className="text-base">
-                Danh sách đề nghị cập nhật đã ghi nhận
+                Danh sách đề nghị cập nhật đã ghi nhận ({loaderData.updateRequests.length})
               </CardTitle>
+              <CardDescription className="text-xs">
+                {isOwner
+                  ? "Chủ sở hữu có thể Phê duyệt & Nhập kho trực tiếp hoặc Từ chối từng đề nghị."
+                  : `Hiển thị các đề nghị cập nhật của bộ phận ${deptId}.`}
+              </CardDescription>
             </CardHeader>
             <CardContent>
               {loaderData.updateRequests.length === 0 ? (
@@ -479,25 +748,55 @@ export default function Module04OfficialDocsRoute({
                 </p>
               ) : (
                 <div className="space-y-2.5">
-                  {loaderData.updateRequests.map((r) => (
-                    <div
-                      key={r.id}
-                      className="rounded-lg border border-slate-200 p-3 text-xs space-y-1"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-blue-700">
-                          {r.doc_number} — {r.title}
-                        </span>
-                        <Badge variant="secondary" className="text-[10px]">
-                          Chờ duyệt · {r.department_id}
-                        </Badge>
+                  {loaderData.updateRequests.map((r) => {
+                    const isPending = r.status === "cho_duyet";
+                    const isReviewing = reviewingId === r.id;
+                    return (
+                      <div
+                        key={r.id}
+                        className="rounded-lg border border-slate-200 p-3.5 text-xs space-y-2"
+                      >
+                        <div className="flex items-start justify-between gap-2 flex-wrap">
+                          <span className="font-bold text-blue-700">
+                            {r.doc_number} — {r.title}
+                          </span>
+                          {renderRequestStatusBadge(r)}
+                        </div>
+                        <p className="text-slate-600 leading-relaxed">{r.reason}</p>
+                        <div className="flex items-center justify-between gap-2 flex-wrap pt-1">
+                          <p className="text-[11px] text-slate-400">
+                            Người đề nghị: {r.requested_by} · {formatTierLabel(r.tier)}
+                          </p>
+
+                          {isOwner && isPending && (
+                            <div className="flex items-center gap-1.5">
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={isReviewing}
+                                onClick={() => void handleReviewRequest(r, "da_duyet")}
+                                className="h-7 px-2.5 text-[11px] gap-1 bg-emerald-600 hover:bg-emerald-700 text-white whitespace-nowrap"
+                              >
+                                <CheckCircle2 className="h-3 w-3" />
+                                Phê duyệt & Nhập kho
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={isReviewing}
+                                onClick={() => void handleReviewRequest(r, "tu_choi")}
+                                className="h-7 px-2.5 text-[11px] gap-1 border-rose-200 text-rose-700 hover:bg-rose-50 whitespace-nowrap"
+                              >
+                                <XCircle className="h-3 w-3" />
+                                Từ chối
+                              </Button>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <p className="text-slate-600">{r.reason}</p>
-                      <p className="text-[11px] text-slate-400">
-                        Người đề nghị: {r.requested_by}
-                      </p>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -527,7 +826,7 @@ export default function Module04OfficialDocsRoute({
                   <p className="font-semibold text-slate-900 mb-1">Tóm tắt:</p>
                   <p>{selectedDoc.summary}</p>
                 </div>
-                <div className="rounded-lg bg-white p-3 border border-slate-200 whitespace-pre-wrap">
+                <div className="rounded-lg bg-white p-3 border border-slate-200 whitespace-pre-wrap max-h-[340px] overflow-y-auto">
                   <p className="font-semibold text-slate-900 mb-1">
                     Nội dung trích lục phục vụ tra cứu AI:
                   </p>

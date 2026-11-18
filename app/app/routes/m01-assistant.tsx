@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router";
+import {
+  Link,
+  useNavigate,
+  useOutletContext,
+  useSearchParams,
+} from "react-router";
 import {
   ArrowUp,
   BookOpen,
+  CheckSquare,
   FileText,
   Paperclip,
   Plus,
@@ -13,30 +19,40 @@ import {
 import type { Route } from "./+types/m01-assistant";
 import {
   apiRequest,
+  extractServerAuthHeaders,
+  getSessionState,
   normalizeDepartmentId,
   resolveServerApiBase,
   uploadSessionFile,
+  wipeSessionState,
   type AssistantMode,
   type ChatTurnResponse,
   type Department,
   type SessionFileItem,
   type SessionMessageItem,
   type SessionState,
+  type WorkspaceOutletContext,
 } from "~/lib/api";
 import { ASSISTANT_MODES, DEPARTMENT_STARTERS } from "~/lib/m01-m02-helpers";
+import { buildM06TaskHandoffUrl } from "~/lib/m03-m05-helpers";
+import { formatAssistantModeBadge } from "~/lib/markdown-helpers";
 import {
   getActiveActorEmail,
+  getActiveTenantSlug,
   getOrInitSessionId,
+  getSavedAssistantMode,
   rotateSessionId,
+  setSavedAssistantMode,
 } from "~/lib/session";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Card } from "~/components/ui/card";
+import { FormattedMarkdown } from "~/components/ui/formatted-markdown";
 import { Textarea } from "~/components/ui/textarea";
 import { cn } from "~/lib/utils";
 
-export function meta({ }: Route.MetaArgs) {
+export function meta({}: Route.MetaArgs) {
   return [{ title: "Mô-đun 01 · Trợ lý AI theo nghiệp vụ — UBND Xã, Phường" }];
 }
 
@@ -44,10 +60,12 @@ export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const deptId = normalizeDepartmentId(url.searchParams.get("dept"));
   const baseUrl = resolveServerApiBase();
+  const headers = extractServerAuthHeaders(request);
 
   try {
     const res = await apiRequest<{ departments: Department[] }>("/api/departments", {
       baseUrl,
+      headers,
     });
     const dept =
       res.departments.find((d) => d.id === deptId) ?? res.departments[0] ?? null;
@@ -61,13 +79,30 @@ export default function Module01AssistantRoute({
   loaderData,
 }: Route.ComponentProps) {
   const [searchParams] = useSearchParams();
-  const deptId = normalizeDepartmentId(
+  const navigate = useNavigate();
+  const outlet = useOutletContext<WorkspaceOutletContext | undefined>();
+
+  const rawDeptId = normalizeDepartmentId(
     searchParams.get("dept") ?? loaderData.deptId,
   );
-  const deptName = loaderData.dept?.name ?? "Văn phòng HĐND & UBND";
+  const deptId =
+    outlet?.currentUser?.role === "officer"
+      ? outlet.currentUser.department_id
+      : rawDeptId;
+
+  const matchedDept =
+    outlet?.departments?.find((d) => d.id === deptId) ?? loaderData.dept;
+  const deptName = matchedDept?.name ?? "Văn phòng HĐND & UBND";
+
+  const activeActorEmail =
+    outlet?.currentUser?.email ??
+    (typeof window !== "undefined" ? getActiveActorEmail() : "tsh.co@tshorg.vn");
+  const activeTenantSlug =
+    outlet?.activeTenantSlug ??
+    (typeof window !== "undefined" ? getActiveTenantSlug() : "default");
 
   const [sessionId, setSessionId] = useState("");
-  const [mode, setMode] = useState<AssistantMode>("nghiep_vu");
+  const [mode, setModeState] = useState<AssistantMode>("nghiep_vu");
   const [messages, setMessages] = useState<SessionMessageItem[]>([]);
   const [files, setFiles] = useState<SessionFileItem[]>([]);
   const [input, setInput] = useState("");
@@ -80,38 +115,60 @@ export default function Module01AssistantRoute({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  function handleSelectMode(nextMode: AssistantMode) {
+    setModeState(nextMode);
+    setSavedAssistantMode(nextMode);
+  }
+
   useEffect(() => {
-    const sid = getOrInitSessionId();
+    setModeState(getSavedAssistantMode());
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const sid = getOrInitSessionId(deptId, activeActorEmail, activeTenantSlug);
     setSessionId(sid);
-    void apiRequest<SessionState>(`/api/sessions/${encodeURIComponent(sid)}`)
+    setStatusBanner(null);
+
+    void getSessionState(sid, deptId)
       .then((state) => {
-        setFiles(state.files);
-        setMessages(state.messages);
+        if (!cancelled) {
+          setFiles(state.files);
+          setMessages(state.messages);
+        }
       })
       .catch(() => {
-        // ignore offline init
+        if (!cancelled) {
+          setFiles([]);
+          setMessages([]);
+        }
       });
 
     const onSessionRotated = (ev: Event) => {
       const nextSid = (ev as CustomEvent<string>).detail;
-      if (nextSid) {
+      if (nextSid && !cancelled) {
         setSessionId(nextSid);
         setFiles([]);
         setMessages([]);
       }
     };
     window.addEventListener("ubnd-session-changed", onSessionRotated);
-    return () =>
+    return () => {
+      cancelled = true;
       window.removeEventListener("ubnd-session-changed", onSessionRotated);
-  }, []);
+    };
+  }, [deptId, activeActorEmail, activeTenantSlug]);
 
   async function handleSend(customPrompt?: string, customMode?: AssistantMode) {
     const text = (customPrompt ?? input).trim();
     if (!text || busy) return;
     const activeMode = customMode ?? mode;
-    if (customMode) setMode(customMode);
+    if (customMode) {
+      handleSelectMode(customMode);
+    }
 
-    const activeSid = sessionId || getOrInitSessionId();
+    const activeSid =
+      sessionId || getOrInitSessionId(deptId, activeActorEmail, activeTenantSlug);
     setBusy(true);
     setStatusBanner(null);
     if (!customPrompt) setInput("");
@@ -119,7 +176,6 @@ export default function Module01AssistantRoute({
     try {
       const res = await apiRequest<ChatTurnResponse>("/api/m01/chat", {
         method: "POST",
-        actorEmail: getActiveActorEmail(),
         body: {
           session_id: activeSid,
           department_id: deptId,
@@ -144,24 +200,20 @@ export default function Module01AssistantRoute({
     ev.target.value = "";
     if (!selected.length) return;
 
-    const activeSid = sessionId || getOrInitSessionId();
+    const activeSid =
+      sessionId || getOrInitSessionId(deptId, activeActorEmail, activeTenantSlug);
     setUploading(true);
     setStatusBanner(null);
     try {
       let latest: SessionState | null = null;
       for (const file of selected) {
-        latest = await uploadSessionFile(
-          activeSid,
-          file,
-          deptId,
-          getActiveActorEmail(),
-        );
+        latest = await uploadSessionFile(activeSid, file, deptId);
       }
       if (latest) {
         setFiles(latest.files);
         setStatusBanner({
           tone: "info",
-          text: `Đã nạp ${selected.length} tệp vào bộ nhớ tạm của phiên hiện tại.`,
+          text: `Đã nạp ${selected.length} tệp vào bộ nhớ tạm của phiên phòng ${deptId}.`,
         });
       }
     } catch (err) {
@@ -175,17 +227,12 @@ export default function Module01AssistantRoute({
   }
 
   async function handleWipeSession() {
-    const activeSid = sessionId || getOrInitSessionId();
+    const activeSid =
+      sessionId || getOrInitSessionId(deptId, activeActorEmail, activeTenantSlug);
     setBusy(true);
     try {
-      await apiRequest(
-        `/api/sessions/${encodeURIComponent(activeSid)}?department_id=${encodeURIComponent(deptId)}`,
-        {
-          method: "DELETE",
-          actorEmail: getActiveActorEmail(),
-        },
-      );
-      const nextSid = rotateSessionId();
+      await wipeSessionState(activeSid, "M01", deptId);
+      const nextSid = rotateSessionId(deptId, activeActorEmail, activeTenantSlug);
       setSessionId(nextSid);
       setMessages([]);
       setFiles([]);
@@ -204,6 +251,32 @@ export default function Module01AssistantRoute({
     }
   }
 
+  function handleHandoffToM06(msg: SessionMessageItem, msgIdx: number) {
+    const prevMsg = msgIdx > 0 ? messages[msgIdx - 1] : undefined;
+    const baseTitle =
+      prevMsg?.role === "user"
+        ? `Xử lý nghiệp vụ: ${prevMsg.content.trim().slice(0, 110)}`
+        : msg.content
+            .replace(/[#*`|>]/g, "")
+            .split(/\r?\n/)
+            .map((s) => s.trim())
+            .find(Boolean) ?? `Triển khai nội dung tư vấn phòng ${deptId}`;
+    const cleanDesc = msg.content
+      .replace(/[#*`|]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 320);
+    const refDoc = msg.citations?.[0]?.doc_number ?? `Tư vấn AI M01 (${deptId})`;
+    navigate(
+      buildM06TaskHandoffUrl({
+        deptId,
+        title: baseTitle,
+        desc: cleanDesc,
+        ref: refDoc,
+      }),
+    );
+  }
+
   const starters = DEPARTMENT_STARTERS[deptId];
   const currentModeMeta =
     ASSISTANT_MODES.find((m) => m.id === mode) ?? ASSISTANT_MODES[1];
@@ -220,7 +293,7 @@ export default function Module01AssistantRoute({
       />
 
       <Card className="border-slate-200 bg-white shadow-xs rounded-xl overflow-hidden">
-        {/* Card Header matching TSH Screenshot */}
+        {/* Card Header */}
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-6 pt-5 pb-4">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-wider text-blue-600">
@@ -267,7 +340,7 @@ export default function Module01AssistantRoute({
               <button
                 key={item.id}
                 type="button"
-                onClick={() => setMode(item.id)}
+                onClick={() => handleSelectMode(item.id)}
                 className={cn(
                   "text-left rounded-xl border p-3.5 transition-all",
                   active
@@ -308,7 +381,7 @@ export default function Module01AssistantRoute({
                 className={cn(
                   "py-2.5",
                   statusBanner.tone === "info" &&
-                  "border-emerald-200 bg-emerald-50 text-emerald-900",
+                    "border-emerald-200 bg-emerald-50 text-emerald-900",
                 )}
               >
                 <AlertDescription className="text-xs">
@@ -335,7 +408,7 @@ export default function Module01AssistantRoute({
                 ))}
                 <Link
                   to={`/xu-ly-tai-lieu?dept=${deptId}`}
-                  className="ml-auto text-xs font-medium text-blue-700 hover:underline"
+                  className="ml-auto text-xs font-medium text-blue-700 hover:underline whitespace-nowrap"
                 >
                   Mở Xử lý & Đối chiếu tệp →
                 </Link>
@@ -357,7 +430,7 @@ export default function Module01AssistantRoute({
                 </h3>
                 <p className="text-xs sm:text-sm text-slate-500">
                   Đặt câu hỏi, yêu cầu soạn thảo hoặc tải tài liệu lên để AI tham
-                  khảo trong phiên làm việc.
+                  khảo trong phiên làm việc riêng của phòng {deptId}.
                 </p>
               </div>
               <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
@@ -377,7 +450,7 @@ export default function Module01AssistantRoute({
               </div>
             </div>
           ) : (
-            <div className="space-y-4 max-h-[460px] overflow-y-auto pr-1">
+            <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1">
               {messages.map((msg, idx) => {
                 const isUser = msg.role === "user";
                 return (
@@ -390,21 +463,36 @@ export default function Module01AssistantRoute({
                   >
                     <div
                       className={cn(
-                        "max-w-3xl rounded-2xl px-4 py-3 text-sm whitespace-pre-wrap leading-relaxed",
+                        "max-w-3xl rounded-2xl px-4 py-3 text-sm leading-relaxed",
                         isUser
-                          ? "bg-blue-600 text-white"
-                          : "border border-slate-200 bg-slate-50 text-slate-800",
+                          ? "bg-blue-600 text-white whitespace-pre-wrap"
+                          : "border border-slate-200 bg-slate-50 text-slate-800 w-full",
                       )}
                     >
                       {!isUser && (
-                        <div className="mb-1.5 flex items-center gap-2">
-                          <Badge className="bg-blue-600 text-white text-[10px] px-1.5 py-0">
+                        <div className="mb-2 flex items-center justify-between gap-2 flex-wrap">
+                          <Badge className="bg-blue-600 text-white text-[10px] px-2 py-0">
                             <Sparkles className="h-2.5 w-2.5 mr-1" />
-                            {msg.mode.toUpperCase()}
+                            {formatAssistantModeBadge(msg.mode)}
                           </Badge>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleHandoffToM06(msg, idx)}
+                            className="h-6 px-2 text-[11px] gap-1 border-blue-200 bg-white text-blue-700 hover:bg-blue-50 whitespace-nowrap"
+                          >
+                            <CheckSquare className="h-3 w-3" />
+                            Giao việc từ tư vấn này (M06)
+                          </Button>
                         </div>
                       )}
-                      {msg.content}
+
+                      {isUser ? (
+                        msg.content
+                      ) : (
+                        <FormattedMarkdown content={msg.content} />
+                      )}
 
                       {!isUser && msg.citations && msg.citations.length > 0 && (
                         <div className="mt-3 pt-2.5 border-t border-slate-200/80 flex flex-wrap items-center gap-1.5">
@@ -448,7 +536,7 @@ export default function Module01AssistantRoute({
               className="min-h-[54px] resize-none border-0 p-1.5 text-sm shadow-none focus-visible:ring-0"
             />
             <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Button
                   type="button"
                   variant="ghost"
@@ -471,7 +559,7 @@ export default function Module01AssistantRoute({
                 disabled={busy || !input.trim()}
                 onClick={() => void handleSend()}
                 aria-label="Gửi yêu cầu"
-                className="h-8 w-8 rounded-full bg-blue-600 hover:bg-blue-700 text-white"
+                className="h-8 w-8 rounded-full bg-blue-600 hover:bg-blue-700 text-white shrink-0"
               >
                 <ArrowUp className="h-4 w-4" />
               </Button>

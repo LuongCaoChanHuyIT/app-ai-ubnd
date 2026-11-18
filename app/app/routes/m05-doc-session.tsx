@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router";
+import { useNavigate, useOutletContext, useSearchParams } from "react-router";
 import {
   AlertTriangle,
+  CheckSquare,
   FileSpreadsheet,
   FileText,
   FlaskConical,
@@ -13,16 +14,24 @@ import {
 import type { Route } from "./+types/m05-doc-session";
 import {
   apiRequest,
+  getSessionState,
   normalizeDepartmentId,
   uploadSessionFile,
+  wipeSessionState,
   type SessionFileItem,
   type SessionProcessAction,
   type SessionProcessResult,
   type SessionState,
+  type WorkspaceOutletContext,
 } from "~/lib/api";
-import { SESSION_PROCESS_TABS } from "~/lib/m03-m05-helpers";
+import {
+  DEPARTMENT_SAMPLE_DOSSIERS,
+  SESSION_PROCESS_TABS,
+  buildM06TaskHandoffUrl,
+} from "~/lib/m03-m05-helpers";
 import {
   getActiveActorEmail,
+  getActiveTenantSlug,
   getOrInitSessionId,
   rotateSessionId,
 } from "~/lib/session";
@@ -36,14 +45,29 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
+import { FormattedMarkdown } from "~/components/ui/formatted-markdown";
 
-export function meta({ }: Route.MetaArgs) {
+export function meta({}: Route.MetaArgs) {
   return [{ title: "Mô-đun 05 · Tải & Xử lý tài liệu phiên — UBND Xã, Phường" }];
 }
 
 export default function Module05DocSessionRoute() {
   const [searchParams] = useSearchParams();
-  const deptId = normalizeDepartmentId(searchParams.get("dept"));
+  const navigate = useNavigate();
+  const outlet = useOutletContext<WorkspaceOutletContext | undefined>();
+
+  const rawDept = normalizeDepartmentId(searchParams.get("dept"));
+  const deptId =
+    outlet?.currentUser?.role === "officer"
+      ? outlet.currentUser.department_id
+      : rawDept;
+
+  const activeActorEmail =
+    outlet?.currentUser?.email ??
+    (typeof window !== "undefined" ? getActiveActorEmail() : "tsh.co@tshorg.vn");
+  const activeTenantSlug =
+    outlet?.activeTenantSlug ??
+    (typeof window !== "undefined" ? getActiveTenantSlug() : "default");
 
   const [sessionId, setSessionId] = useState("");
   const [files, setFiles] = useState<SessionFileItem[]>([]);
@@ -57,25 +81,41 @@ export default function Module05DocSessionRoute() {
   } | null>(null);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const sampleDossier = DEPARTMENT_SAMPLE_DOSSIERS[deptId];
 
   useEffect(() => {
-    const sid = getOrInitSessionId();
+    let cancelled = false;
+    const sid = getOrInitSessionId(deptId, activeActorEmail, activeTenantSlug);
     setSessionId(sid);
-    void apiRequest<SessionState>(`/api/sessions/${encodeURIComponent(sid)}`)
-      .then((state) => setFiles(state.files))
-      .catch(() => { });
+    setResult(null);
+    setBanner(null);
+
+    void getSessionState(sid, deptId)
+      .then((state) => {
+        if (!cancelled) {
+          setFiles(state.files);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFiles([]);
+        }
+      });
 
     const onRotated = (ev: Event) => {
       const nextSid = (ev as CustomEvent<string>).detail;
-      if (nextSid) {
+      if (nextSid && !cancelled) {
         setSessionId(nextSid);
         setFiles([]);
         setResult(null);
       }
     };
     window.addEventListener("ubnd-session-changed", onRotated);
-    return () => window.removeEventListener("ubnd-session-changed", onRotated);
-  }, []);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("ubnd-session-changed", onRotated);
+    };
+  }, [deptId, activeActorEmail, activeTenantSlug]);
 
   async function handleFilesChosen(ev: React.ChangeEvent<HTMLInputElement>) {
     const selected = Array.from(ev.target.files ?? []);
@@ -83,23 +123,19 @@ export default function Module05DocSessionRoute() {
     if (!selected.length) return;
     setBusy(true);
     setBanner(null);
-    const activeSid = sessionId || getOrInitSessionId();
+    const activeSid =
+      sessionId || getOrInitSessionId(deptId, activeActorEmail, activeTenantSlug);
 
     try {
       let latest: SessionState | null = null;
       for (const f of selected) {
-        latest = await uploadSessionFile(
-          activeSid,
-          f,
-          deptId,
-          getActiveActorEmail(),
-        );
+        latest = await uploadSessionFile(activeSid, f, deptId);
       }
       if (latest) {
         setFiles(latest.files);
         setBanner({
           tone: "info",
-          text: `Đã tải lên ${selected.length} tệp vào bộ nhớ phiên hiện tại.`,
+          text: `Đã tải lên ${selected.length} tệp vào bộ nhớ phiên phòng ${deptId}.`,
         });
       }
     } catch (err) {
@@ -115,35 +151,31 @@ export default function Module05DocSessionRoute() {
   async function handleLoadSampleDossier() {
     setBusy(true);
     setBanner(null);
-    const activeSid = sessionId || getOrInitSessionId();
+    let activeSid =
+      sessionId || getOrInitSessionId(deptId, activeActorEmail, activeTenantSlug);
     try {
-      const f1 = new File(
-        [
-          "ĐƠN ĐỀ NGHỊ XÁC NHẬN NGUỒN GỐC ĐẤT\nHọ tên chủ hộ: Nguyễn Văn An.\nThửa đất số 42, tờ bản đồ số 08.\nDiện tích kê khai: 125 m2.\nNgày viết đơn: 10/10/2026.",
-        ],
-        "01_Don_de_nghi_Nguyen_Van_An.txt",
-        { type: "text/plain" },
-      );
-      const f2 = new File(
-        [
-          "BIÊN BẢN XÁC MINH THỰC ĐỊA\nHọ tên chủ hộ: Nguyễn Văn An.\nThửa đất số 42, tờ bản đồ số 08.\nDiện tích đo đạc thực tế: 142 m2.\nNgày lập biên bản: 16/10/2026.",
-        ],
-        "02_Bien_ban_xac_minh_thuc_dia.txt",
-        { type: "text/plain" },
-      );
-      await uploadSessionFile(activeSid, f1, deptId, getActiveActorEmail());
-      const state = await uploadSessionFile(
-        activeSid,
-        f2,
-        deptId,
-        getActiveActorEmail(),
-      );
+      if (files.length > 0) {
+        await wipeSessionState(activeSid, "M05", deptId);
+        activeSid = rotateSessionId(deptId, activeActorEmail, activeTenantSlug);
+        setSessionId(activeSid);
+      }
+
+      const [sample1, sample2] = sampleDossier.files;
+      const f1 = new File([sample1.content], sample1.filename, {
+        type: "text/plain",
+      });
+      const f2 = new File([sample2.content], sample2.filename, {
+        type: "text/plain",
+      });
+
+      await uploadSessionFile(activeSid, f1, deptId);
+      const state = await uploadSessionFile(activeSid, f2, deptId);
       setFiles(state.files);
+
       const proc = await apiRequest<SessionProcessResult>(
         `/api/m05/sessions/${encodeURIComponent(activeSid)}/process`,
         {
           method: "POST",
-          actorEmail: getActiveActorEmail(),
           body: { action: "doi_chieu", department_id: deptId },
         },
       );
@@ -151,7 +183,7 @@ export default function Module05DocSessionRoute() {
       setResult(proc);
       setBanner({
         tone: "info",
-        text: "Đã nạp bộ 02 tệp hồ sơ mẫu và chạy đối chiếu phát hiện chênh lệch số liệu.",
+        text: `Đã nạp bộ hồ sơ mẫu phòng ${deptId} (${sampleDossier.label}) và chạy đối chiếu sai lệch tự động.`,
       });
     } catch (err) {
       setBanner({
@@ -167,13 +199,13 @@ export default function Module05DocSessionRoute() {
     setActiveAction(action);
     setBusy(true);
     setBanner(null);
-    const activeSid = sessionId || getOrInitSessionId();
+    const activeSid =
+      sessionId || getOrInitSessionId(deptId, activeActorEmail, activeTenantSlug);
     try {
       const proc = await apiRequest<SessionProcessResult>(
         `/api/m05/sessions/${encodeURIComponent(activeSid)}/process`,
         {
           method: "POST",
-          actorEmail: getActiveActorEmail(),
           body: { action, department_id: deptId },
         },
       );
@@ -189,17 +221,12 @@ export default function Module05DocSessionRoute() {
   }
 
   async function handleWipe() {
-    const activeSid = sessionId || getOrInitSessionId();
+    const activeSid =
+      sessionId || getOrInitSessionId(deptId, activeActorEmail, activeTenantSlug);
     setBusy(true);
     try {
-      await apiRequest(
-        `/api/sessions/${encodeURIComponent(activeSid)}?department_id=${encodeURIComponent(deptId)}`,
-        {
-          method: "DELETE",
-          actorEmail: getActiveActorEmail(),
-        },
-      );
-      const nextSid = rotateSessionId();
+      await wipeSessionState(activeSid, "M05", deptId);
+      const nextSid = rotateSessionId(deptId, activeActorEmail, activeTenantSlug);
       setSessionId(nextSid);
       setFiles([]);
       setResult(null);
@@ -207,9 +234,31 @@ export default function Module05DocSessionRoute() {
         tone: "info",
         text: "Đã kết thúc phiên và xóa sạch 100% dữ liệu tài liệu tạm trên bộ nhớ RAM.",
       });
+    } catch (err) {
+      setBanner({
+        tone: "error",
+        text: err instanceof Error ? err.message : "Không thể xóa phiên",
+      });
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleHandoffToM06() {
+    if (!result) return;
+    const fileNames = files.map((f) => f.filename).join(", ");
+    const highlightText =
+      result.highlights.length > 0
+        ? result.highlights.join("; ")
+        : result.result_markdown.replace(/[#*`|]/g, "").slice(0, 260);
+    navigate(
+      buildM06TaskHandoffUrl({
+        deptId,
+        title: `Xử lý & xác minh hồ sơ phòng ${deptId}: ${sampleDossier.label}`,
+        desc: `Tệp đối chiếu (${files.length}): ${fileNames}. Nội dung lưu ý: ${highlightText}`,
+        ref: `Phiên tài liệu M05 (${deptId})`,
+      }),
+    );
   }
 
   return (
@@ -227,7 +276,7 @@ export default function Module05DocSessionRoute() {
         <ShieldAlert className="h-4 w-4 text-blue-600" />
         <AlertTitle className="text-sm font-bold flex items-center justify-between gap-2 flex-wrap">
           <span>
-            Cam kết bảo mật tài liệu phiên hiện tại ({files.length} tệp đang mở)
+            Cam kết bảo mật tài liệu phiên phòng {deptId} ({files.length} tệp đang mở)
           </span>
           <Button
             type="button"
@@ -235,7 +284,7 @@ export default function Module05DocSessionRoute() {
             size="sm"
             disabled={busy}
             onClick={() => void handleWipe()}
-            className="h-7 text-xs border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100"
+            className="h-7 text-xs border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 whitespace-nowrap"
           >
             <Trash2 className="h-3.5 w-3.5 mr-1" />
             Kết thúc phiên - Xóa bộ nhớ
@@ -244,8 +293,8 @@ export default function Module05DocSessionRoute() {
         <AlertDescription className="text-xs text-blue-900/90">
           Hỗ trợ <code>.txt</code>, <code>.md</code>, <code>.csv</code>,{" "}
           <code>.json</code>, <code>.docx</code>, <code>.pdf</code> (tối đa 10 MB/tệp).
-          Tài liệu chỉ tồn tại trên RAM trong phiên làm việc và tự động chia sẻ sang
-          Mô-đun 01 để hỏi đáp.
+          Tài liệu được cô lập riêng theo phòng {deptId} trên RAM và tự động chia sẻ
+          sang Mô-đun 01.
         </AlertDescription>
       </Alert>
 
@@ -267,10 +316,10 @@ export default function Module05DocSessionRoute() {
         <Card className="lg:col-span-5 border-slate-200 shadow-xs h-fit">
           <CardHeader className="pb-3">
             <CardTitle className="text-base">
-              Danh sách tệp hồ sơ trong phiên
+              Danh sách tệp hồ sơ trong phiên ({deptId})
             </CardTitle>
             <CardDescription className="text-xs">
-              Tải lên các tài liệu cần đọc, trích xuất hoặc đối chiếu chéo.
+              Mẫu chuyên ngành phòng {deptId}: <strong>{sampleDossier.label}</strong> ({sampleDossier.summary}).
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -289,17 +338,19 @@ export default function Module05DocSessionRoute() {
                 variant="outline"
                 disabled={busy}
                 onClick={() => void handleLoadSampleDossier()}
-                className="gap-1.5 text-xs"
+                className="gap-1.5 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
               >
                 <FlaskConical className="h-3.5 w-3.5" />
-                Nạp 02 tệp hồ sơ mẫu
+                Tải bộ hồ sơ mẫu của phòng ({deptId})
               </Button>
             </div>
 
             {files.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-500">
-                Chưa có tệp nào trong phiên. Nhấn <strong>Chọn tệp tải lên</strong>{" "}
-                hoặc <strong>Nạp 02 tệp hồ sơ mẫu</strong> để thử nghiệm ngay.
+                Chưa có tệp nào trong phiên phòng {deptId}. Nhấn{" "}
+                <strong>Chọn tệp tải lên</strong> hoặc{" "}
+                <strong>Tải bộ hồ sơ mẫu của phòng ({deptId})</strong> để đối chiếu
+                sai lệch ngay.
               </div>
             ) : (
               <div className="space-y-2">
@@ -354,8 +405,8 @@ export default function Module05DocSessionRoute() {
                       : "text-xs"
                   }
                 >
-                  <Sparkles className="h-3 w-3 mr-1" />
-                  {tab.label}
+                  <Sparkles className="h-3 w-3 mr-1 shrink-0" />
+                  <span className="truncate">{tab.label}</span>
                 </Button>
               ))}
             </div>
@@ -373,19 +424,32 @@ export default function Module05DocSessionRoute() {
                 {result.highlights.length > 0 && result.action === "doi_chieu" && (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1.5">
                     <p className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
-                      <AlertTriangle className="h-4 w-4 text-amber-600" />
+                      <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
                       Điểm cần kiểm tra lại trong hồ sơ:
                     </p>
                     {result.highlights.map((h) => (
-                      <p key={h} className="text-xs text-amber-900 pl-5">
-                        • {h}
-                      </p>
+                      <div key={h} className="pl-5 text-xs text-amber-900">
+                        <FormattedMarkdown content={`- ${h}`} className="text-xs" />
+                      </div>
                     ))}
                   </div>
                 )}
 
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs sm:text-sm whitespace-pre-wrap leading-relaxed text-slate-800">
-                  {result.result_markdown}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-slate-800">
+                  <FormattedMarkdown content={result.result_markdown} />
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleHandoffToM06}
+                    className="gap-1.5 text-xs border-blue-200 bg-blue-50/70 text-blue-700 hover:bg-blue-100"
+                  >
+                    <CheckSquare className="h-3.5 w-3.5" />
+                    Tạo nhiệm vụ xử lý hồ sơ (Mô-đun 06)
+                  </Button>
                 </div>
               </div>
             )}

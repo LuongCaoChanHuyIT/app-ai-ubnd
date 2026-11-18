@@ -1,13 +1,24 @@
 import { useEffect, useState } from "react";
-import { useRevalidator, useSearchParams } from "react-router";
+import {
+  Link,
+  useOutletContext,
+  useRevalidator,
+  useSearchParams,
+} from "react-router";
 import {
   AlertTriangle,
+  ArrowLeft,
+  ArrowRightLeft,
+  Building2,
   CheckCircle2,
   Copy,
+  Database,
   History,
   KeyRound,
+  Lock,
   Plus,
   RefreshCw,
+  RotateCcw,
   Save,
   ShieldCheck,
   SlidersHorizontal,
@@ -15,7 +26,9 @@ import {
 } from "lucide-react";
 import type { Route } from "./+types/m07-admin";
 import {
+  ApiError,
   apiRequest,
+  extractServerAuthHeaders,
   normalizeDepartmentId,
   resolveServerApiBase,
   type ApiConnector,
@@ -24,9 +37,13 @@ import {
   type Department,
   type DepartmentId,
   type RbacUser,
+  type WorkspaceOutletContext,
 } from "~/lib/api";
-import { ADMIN_TABS, normalizeAdminTab, type AdminTabId } from "~/lib/m06-m07-helpers";
-import { getActiveActorEmail } from "~/lib/session";
+import {
+  ADMIN_TABS,
+  normalizeAdminTab,
+  type AdminTabId,
+} from "~/lib/m06-m07-helpers";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -57,7 +74,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { Textarea } from "~/components/ui/textarea";
 
-export function meta({ }: Route.MetaArgs) {
+export function meta({}: Route.MetaArgs) {
   return [{ title: "Mô-đun 07 · Phân quyền & Quản trị hệ thống — UBND Xã, Phường" }];
 }
 
@@ -65,30 +82,55 @@ export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const deptId = normalizeDepartmentId(url.searchParams.get("dept"));
   const baseUrl = resolveServerApiBase();
+  const headers = extractServerAuthHeaders(request);
 
   try {
     const [deptRes, userRes, connRes, logRes, tenantRes] = await Promise.all([
-      apiRequest<{ departments: Department[] }>("/api/departments", { baseUrl }),
-      apiRequest<{ users: RbacUser[] }>("/api/m07/users", { baseUrl }),
+      apiRequest<{ departments: Department[] }>("/api/departments", {
+        baseUrl,
+        headers,
+      }),
+      apiRequest<{ users: RbacUser[] }>("/api/m07/users", {
+        baseUrl,
+        headers,
+      }),
       apiRequest<{ connectors: ApiConnector[] }>("/api/m07/api-connectors", {
         baseUrl,
+        headers,
       }),
       apiRequest<{ logs: AuditLogEntry[] }>("/api/m07/audit-logs?limit=40", {
         baseUrl,
+        headers,
       }),
-      apiRequest<{ tenants: ClonedTenant[] }>("/api/m07/tenants", { baseUrl }),
+      apiRequest<{ tenants: ClonedTenant[] }>("/api/m07/tenants", {
+        baseUrl,
+        headers,
+      }),
     ]);
     return {
       deptId,
+      forbidden: false,
       departments: deptRes.departments,
       users: userRes.users,
       connectors: connRes.connectors,
       logs: logRes.logs,
       tenants: tenantRes.tenants,
     };
-  } catch {
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 403 || err.status === 401)) {
+      return {
+        deptId,
+        forbidden: true,
+        departments: [] as Department[],
+        users: [] as RbacUser[],
+        connectors: [] as ApiConnector[],
+        logs: [] as AuditLogEntry[],
+        tenants: [] as ClonedTenant[],
+      };
+    }
     return {
       deptId,
+      forbidden: false,
       departments: [] as Department[],
       users: [] as RbacUser[],
       connectors: [] as ApiConnector[],
@@ -101,10 +143,19 @@ export async function loader({ request }: Route.LoaderArgs) {
 export default function Module07AdminRoute({ loaderData }: Route.ComponentProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const revalidator = useRevalidator();
+  const outlet = useOutletContext<WorkspaceOutletContext | undefined>();
 
-  const deptId = normalizeDepartmentId(
+  const rawDept = normalizeDepartmentId(
     searchParams.get("dept") ?? loaderData.deptId,
   );
+  const isOfficer = outlet?.currentUser?.role === "officer";
+  const deptId = isOfficer
+    ? outlet.currentUser.department_id
+    : rawDept;
+
+  const activeTenantSlug = outlet?.activeTenantSlug ?? "default";
+  const communeNameDisplay = outlet?.communeName ?? "UBND xã, phường trung tâm";
+
   const activeTab = normalizeAdminTab(searchParams.get("tab"));
 
   const [banner, setBanner] = useState<{
@@ -131,7 +182,7 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
 
   useEffect(() => {
     const d = loaderData.departments.find((item) => item.id === instDeptId);
-    if (d) setInstText(d.instruction);
+    if (d) setInstText(d.instruction ?? "");
   }, [instDeptId, loaderData.departments]);
 
   // API Connector state
@@ -148,9 +199,48 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
   const [connKey, setConnKey] = useState("");
   const [connActive, setConnActive] = useState(firstConnector?.active ?? false);
 
+  useEffect(() => {
+    if (firstConnector) {
+      setConnName(firstConnector.name);
+      setConnUrl(firstConnector.base_url);
+      setConnModel(firstConnector.model_name);
+      setConnActive(firstConnector.active);
+    }
+  }, [firstConnector]);
+
   // Clone Tenant state
   const [communeName, setCommuneName] = useState("UBND Phường Hòa Xuân");
   const [communeAdmin, setCommuneAdmin] = useState("admin.hoaxuan@ubnd.gov.vn");
+
+  // Graceful 403 / Officer guard card
+  if (loaderData.forbidden || isOfficer) {
+    return (
+      <div className="mx-auto max-w-2xl py-10">
+        <Card className="border-amber-200 bg-white shadow-xs">
+          <CardHeader className="space-y-2 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
+              <Lock className="h-6 w-6" />
+            </div>
+            <CardTitle className="text-lg text-slate-900">
+              Giới hạn quyền truy cập Quản trị hệ thống
+            </CardTitle>
+            <CardDescription className="text-sm text-slate-600 leading-relaxed">
+              Khu vực Quản trị hệ thống (Mô-đun 07) chỉ dành cho tài khoản Quản trị
+              viên cấp cao (Owner). Vui lòng quay về không gian chuyên môn của phòng.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex justify-center pb-6">
+            <Button asChild className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
+              <Link to={`/?dept=${deptId}`}>
+                <ArrowLeft className="h-4 w-4" />
+                Quay về Trợ lý nghiệp vụ (Mô-đun 01 · Phòng {deptId})
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   function handleTabChange(next: string) {
     const tab = normalizeAdminTab(next);
@@ -169,7 +259,6 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
     try {
       await apiRequest("/api/m07/users", {
         method: "POST",
-        actorEmail: getActiveActorEmail(),
         body: {
           email: newEmail.trim(),
           full_name: newName.trim(),
@@ -202,7 +291,6 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
     try {
       await apiRequest(`/api/m07/users/${userId}`, {
         method: "DELETE",
-        actorEmail: getActiveActorEmail(),
       });
       setBanner({ tone: "ok", text: "Đã thu hồi quyền truy cập tài khoản." });
       revalidator.revalidate();
@@ -223,12 +311,11 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
     try {
       await apiRequest(`/api/m07/departments/${instDeptId}/instruction`, {
         method: "PUT",
-        actorEmail: getActiveActorEmail(),
         body: { instruction: instText },
       });
       setBanner({
         tone: "ok",
-        text: `Đã lưu Instruction nghiệp vụ cho phòng ${instDeptId}.`,
+        text: `Đã lưu Instruction nghiệp vụ cho phòng ${instDeptId} (${communeNameDisplay}).`,
       });
       revalidator.revalidate();
     } catch (err) {
@@ -249,7 +336,6 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
     try {
       await apiRequest(`/api/m07/api-connectors/${firstConnector.id}`, {
         method: "PUT",
-        actorEmail: getActiveActorEmail(),
         body: {
           name: connName,
           provider: "openai-compatible",
@@ -283,7 +369,6 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
     try {
       const created = await apiRequest<ClonedTenant>("/api/m07/clone-tenant", {
         method: "POST",
-        actorEmail: getActiveActorEmail(),
         body: {
           commune_name: communeName.trim(),
           admin_email: communeAdmin.trim(),
@@ -291,7 +376,7 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
       });
       setBanner({
         tone: "ok",
-        text: `Đã nhân bản thành công hệ thống AI độc lập '${created.commune_name}' (mã định danh: ${created.slug}).`,
+        text: `Đã nhân bản thành công hệ thống AI độc lập '${created.commune_name}' (mã định danh: ${created.slug}). Bấm 'Chuyển sang vận hành đơn vị này' để làm việc trực tiếp trên CSDL mới.`,
       });
       revalidator.revalidate();
     } catch (err) {
@@ -304,15 +389,46 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
     }
   }
 
+  function handleActivateTenant(tenant: ClonedTenant) {
+    outlet?.switchTenant(tenant.slug, tenant.admin_email);
+    setBanner({
+      tone: "ok",
+      text: `Đã chuyển sang vận hành trực tiếp hệ thống độc lập của '${tenant.commune_name}' (${tenant.slug}).`,
+    });
+  }
+
+  function handleReturnRootTenant() {
+    outlet?.switchTenant("default");
+    setBanner({
+      tone: "ok",
+      text: "Đã quay về vận hành đơn vị gốc (default).",
+    });
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <div>
-        <p className="text-[11px] font-bold uppercase tracking-wider text-blue-600">
-          MÔ-ĐUN 07 · QUẢN TRỊ, PHÂN QUYỀN & NHÂN BẢN HỆ THỐNG
-        </p>
-        <h2 className="text-xl font-bold text-slate-900">
-          Tổ chức tài khoản theo 4 nhóm nghiệp vụ & Triển khai độc lập cho từng xã, phường
-        </h2>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-wider text-blue-600">
+            MÔ-ĐUN 07 · QUẢN TRỊ, PHÂN QUYỀN & NHÂN BẢN HỆ THỐNG ({communeNameDisplay.toUpperCase()})
+          </p>
+          <h2 className="text-xl font-bold text-slate-900">
+            Tổ chức tài khoản theo 4 nhóm nghiệp vụ & Triển khai độc lập cho từng xã, phường
+          </h2>
+        </div>
+
+        {activeTenantSlug !== "default" && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleReturnRootTenant}
+            className="gap-1.5 border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 text-xs whitespace-nowrap"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Quay về đơn vị gốc
+          </Button>
+        )}
       </div>
 
       {/* 4 Specialized Department Group Summary Cards */}
@@ -364,7 +480,10 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
         </Alert>
       )}
 
-      <Tabs value={activeTab} onValueChange={(v) => handleTabChange(v as AdminTabId)}>
+      <Tabs
+        value={activeTab}
+        onValueChange={(v) => handleTabChange(v as AdminTabId)}
+      >
         <TabsList className="flex flex-wrap h-auto">
           {ADMIN_TABS.map((t) => (
             <TabsTrigger key={t.id} value={t.id} className="text-xs">
@@ -374,7 +493,10 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
         </TabsList>
 
         {/* Tab 1: Phân quyền email */}
-        <TabsContent value="phan-quyen" className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-3">
+        <TabsContent
+          value="phan-quyen"
+          className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-3"
+        >
           <Card className="lg:col-span-4 border-slate-200 shadow-xs h-fit">
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-1.5">
@@ -382,7 +504,8 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                 Cấp quyền email cán bộ
               </CardTitle>
               <CardDescription className="text-xs">
-                Chỉ Chủ sở hữu hệ thống mới có quyền thêm hoặc thu hồi tài khoản.
+                Chỉ Chủ sở hữu hệ thống mới có quyền thêm hoặc thu hồi tài khoản tại{" "}
+                <strong>{communeNameDisplay}</strong>.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -409,7 +532,7 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                   value={newUserDept}
                   onValueChange={(v) => setNewUserDept(v as DepartmentId)}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full min-w-0">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -419,7 +542,7 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                     <SelectItem value="NNMT">Nông nghiệp & Môi trường</SelectItem>
                   </SelectContent>
                 </Select>
-                <div className="flex items-center justify-between rounded-lg border border-slate-200 p-2.5 text-xs">
+                <div className="flex items-center justify-between rounded-lg border border-slate-200 p-2.5 text-xs gap-2">
                   <span>Quyền khai thác Kho dữ liệu riêng</span>
                   <Switch
                     checked={newPrivateAccess}
@@ -450,30 +573,30 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                   <TableHeader>
                     <TableRow className="bg-slate-50">
                       <TableHead>Email & Họ tên</TableHead>
-                      <TableHead>Nhóm nghiệp vụ</TableHead>
-                      <TableHead>Kho riêng</TableHead>
-                      <TableHead>Vai trò</TableHead>
-                      <TableHead className="text-right">Thao tác</TableHead>
+                      <TableHead className="w-[95px]">Phòng</TableHead>
+                      <TableHead className="w-[100px]">Kho riêng</TableHead>
+                      <TableHead className="w-[105px]">Vai trò</TableHead>
+                      <TableHead className="w-[80px] text-right">Thao tác</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {loaderData.users.map((u) => (
                       <TableRow key={u.id}>
-                        <TableCell className="text-xs">
+                        <TableCell className="text-xs whitespace-normal min-w-[200px]">
                           <p className="font-semibold text-slate-900">{u.email}</p>
                           <p className="text-slate-500">
                             {u.full_name} · {u.position}
                           </p>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Badge variant="secondary" className="text-xs">
                             {u.department_id}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-xs">
+                        <TableCell className="text-xs whitespace-nowrap">
                           {u.private_repo_access ? "Được phép" : "Giới hạn"}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <Badge
                             className={
                               u.role === "owner"
@@ -484,7 +607,7 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                             {u.role === "owner" ? "Chủ sở hữu" : "Cán bộ"}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right whitespace-nowrap">
                           {u.role !== "owner" && (
                             <Button
                               type="button"
@@ -517,7 +640,8 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
               </CardTitle>
               <CardDescription className="text-xs">
                 Chỉ dẫn này được gắn trực tiếp vào ngữ cảnh của Trợ lý AI khi cán bộ
-                làm việc trong không gian phòng tương ứng.
+                làm việc trong không gian phòng tương ứng của{" "}
+                <strong>{communeNameDisplay}</strong>.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -526,7 +650,7 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                   value={instDeptId}
                   onValueChange={(v) => setInstDeptId(v as DepartmentId)}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full min-w-0">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -582,7 +706,7 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                   />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1">
+                  <div className="space-y-1 min-w-0">
                     <label className="text-xs font-semibold text-slate-700">
                       Base URL (OpenAI-compatible)
                     </label>
@@ -591,7 +715,7 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                       onChange={(e) => setConnUrl(e.target.value)}
                     />
                   </div>
-                  <div className="space-y-1">
+                  <div className="space-y-1 min-w-0">
                     <label className="text-xs font-semibold text-slate-700">
                       Model Name
                     </label>
@@ -602,7 +726,7 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700 flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-700 flex items-center justify-between flex-wrap gap-1">
                     <span>API Secret Key (chỉ nhập khi muốn thay đổi)</span>
                     <Badge variant="outline" className="font-mono text-[11px]">
                       Hiện tại:{" "}
@@ -616,7 +740,7 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                     placeholder="sk-..."
                   />
                 </div>
-                <div className="flex items-center justify-between rounded-lg border border-slate-200 p-3 text-xs">
+                <div className="flex items-center justify-between rounded-lg border border-slate-200 p-3 text-xs gap-3">
                   <div>
                     <p className="font-semibold text-slate-900">
                       Kích hoạt gọi LLM trực tiếp
@@ -643,15 +767,15 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
         {/* Tab 4: Nhật ký hệ thống */}
         <TabsContent value="nhat-ky" className="pt-3">
           <Card className="border-slate-200 shadow-xs">
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 flex-wrap">
               <div>
                 <CardTitle className="text-base flex items-center gap-1.5">
                   <History className="h-4 w-4 text-blue-600" />
                   Nhật ký hoạt động hệ thống ({loaderData.logs.length} bản ghi gần nhất)
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Ghi nhận thao tác nghiệp vụ mà không lưu trữ nội dung tài liệu tạm
-                  của phiên.
+                  Ghi nhận thao tác nghiệp vụ tại <strong>{communeNameDisplay}</strong>{" "}
+                  mà không lưu trữ nội dung tài liệu tạm của phiên.
                 </CardDescription>
               </div>
               <Button
@@ -659,7 +783,7 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                 variant="outline"
                 size="sm"
                 onClick={() => revalidator.revalidate()}
-                className="gap-1.5 text-xs"
+                className="gap-1.5 text-xs whitespace-nowrap"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
                 Làm mới
@@ -670,31 +794,31 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-slate-50">
-                      <TableHead className="w-[170px]">Thời gian</TableHead>
-                      <TableHead className="w-[180px]">Tài khoản</TableHead>
-                      <TableHead className="w-[90px]">Mô-đun</TableHead>
-                      <TableHead className="w-[150px]">Hành động</TableHead>
+                      <TableHead className="w-[155px]">Thời gian</TableHead>
+                      <TableHead className="w-[175px]">Tài khoản</TableHead>
+                      <TableHead className="w-[95px]">Mô-đun</TableHead>
+                      <TableHead className="w-[140px]">Hành động</TableHead>
                       <TableHead>Chi tiết</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {loaderData.logs.map((log) => (
                       <TableRow key={log.id} className="text-xs">
-                        <TableCell className="text-slate-500 font-mono text-[11px]">
+                        <TableCell className="text-slate-500 font-mono text-[11px] whitespace-nowrap align-top">
                           {log.created_at.slice(0, 19).replace("T", " ")}
                         </TableCell>
-                        <TableCell className="font-medium">
+                        <TableCell className="font-medium whitespace-nowrap align-top">
                           {log.actor_email}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap align-top">
                           <Badge variant="outline" className="text-[10px]">
                             {log.module_code} · {log.department_id}
                           </Badge>
                         </TableCell>
-                        <TableCell className="font-mono text-[11px] text-blue-700">
+                        <TableCell className="font-mono text-[11px] text-blue-700 whitespace-nowrap align-top">
                           {log.action}
                         </TableCell>
-                        <TableCell className="text-slate-700">
+                        <TableCell className="text-slate-700 whitespace-normal min-w-[220px] align-top">
                           {log.detail}
                         </TableCell>
                       </TableRow>
@@ -706,8 +830,11 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
           </Card>
         </TabsContent>
 
-        {/* Tab 5: Nhân bản AI */}
-        <TabsContent value="nhan-ban" className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-3">
+        {/* Tab 5: Nhân bản AI (Multi-Tenant Provisioning & Live Switch) */}
+        <TabsContent
+          value="nhan-ban"
+          className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-3"
+        >
           <Card className="lg:col-span-5 border-slate-200 shadow-xs h-fit">
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-1.5">
@@ -757,10 +884,39 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
           </Card>
 
           <Card className="lg:col-span-7 border-slate-200 shadow-xs">
-            <CardHeader>
-              <CardTitle className="text-base">
-                Các đơn vị xã, phường đã nhân bản ({loaderData.tenants.length})
-              </CardTitle>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div>
+                  <CardTitle className="text-base">
+                    Các đơn vị xã, phường đã nhân bản ({loaderData.tenants.length})
+                  </CardTitle>
+                  <CardDescription className="text-xs mt-0.5">
+                    Bấm 1 chạm để chuyển toàn bộ phiên quản trị sang vận hành trực tiếp
+                    trên cơ sở dữ liệu độc lập của từng xã/phường.
+                  </CardDescription>
+                </div>
+
+                {activeTenantSlug === "default" ? (
+                  <Badge
+                    variant="outline"
+                    className="border-blue-200 bg-blue-50 text-blue-700 text-[11px] whitespace-nowrap"
+                  >
+                    <Building2 className="h-3 w-3 mr-1" />
+                    Đang ở đơn vị gốc (default)
+                  </Badge>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleReturnRootTenant}
+                    className="h-7 text-xs gap-1 border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 whitespace-nowrap"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Quay về đơn vị gốc
+                  </Button>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               {loaderData.tenants.length === 0 ? (
@@ -770,27 +926,76 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                 </p>
               ) : (
                 <div className="space-y-2.5">
-                  {loaderData.tenants.map((t) => (
-                    <div
-                      key={t.id}
-                      className="rounded-lg border border-slate-200 bg-slate-50/70 p-3.5 text-xs space-y-1"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-slate-900">
-                          {t.commune_name}
-                        </span>
-                        <Badge className="bg-emerald-600 text-white font-mono text-[10px]">
-                          {t.slug}
-                        </Badge>
+                  {loaderData.tenants.map((t) => {
+                    const isOperating = activeTenantSlug === t.slug;
+                    return (
+                      <div
+                        key={t.id}
+                        className={
+                          isOperating
+                            ? "rounded-lg border-2 border-emerald-500 bg-emerald-50/50 p-3.5 text-xs space-y-2"
+                            : "rounded-lg border border-slate-200 bg-slate-50/70 p-3.5 text-xs space-y-2"
+                        }
+                      >
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-bold text-slate-900 text-sm">
+                              {t.commune_name}
+                            </span>
+                            <Badge
+                              variant="outline"
+                              className="font-mono text-[10px] border-slate-300 bg-white"
+                            >
+                              {t.slug}
+                            </Badge>
+                          </div>
+
+                          {isOperating ? (
+                            <Badge className="bg-emerald-600 text-white text-[10px] whitespace-nowrap">
+                              Đang vận hành
+                            </Badge>
+                          ) : null}
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-slate-600">
+                          <div>
+                            <p>
+                              Chủ sở hữu: <strong>{t.admin_email}</strong>
+                            </p>
+                            <p className="font-mono text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                              <Database className="h-3 w-3 text-blue-600 shrink-0" />
+                              Kho lưu trữ cô lập: {t.storage_label || `tenants/${t.slug}.db`}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            {isOperating ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={handleReturnRootTenant}
+                                className="h-7 px-2.5 text-xs gap-1 border-amber-300 bg-white text-amber-900 hover:bg-amber-50 whitespace-nowrap"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                Quay về đơn vị gốc
+                              </Button>
+                            ) : (
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => handleActivateTenant(t)}
+                                className="h-7 px-2.5 text-xs gap-1.5 bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap"
+                              >
+                                <ArrowRightLeft className="h-3 w-3" />
+                                Chuyển sang vận hành đơn vị này
+                              </Button>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <p className="text-slate-600">
-                        Chủ sở hữu: <strong>{t.admin_email}</strong>
-                      </p>
-                      <p className="font-mono text-[11px] text-slate-400 truncate">
-                        CSDL độc lập: {t.db_path}
-                      </p>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>

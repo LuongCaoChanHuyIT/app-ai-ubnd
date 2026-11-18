@@ -1,4 +1,4 @@
-import type { TaskItem, TaskStatus } from "./api.ts";
+import type { DepartmentId, TaskItem, TaskStatus } from "./api.ts";
 
 export type AdminTabId =
   | "phan-quyen"
@@ -27,6 +27,69 @@ export function normalizeAdminTab(raw: string | null | undefined): AdminTabId {
   return "phan-quyen";
 }
 
+export function normalizeM04Tab(
+  raw: string | null | undefined,
+): "danh_muc" | "de_nghi" {
+  if (raw === "de_nghi" || raw === "de-nghi") {
+    return "de_nghi";
+  }
+  return "danh_muc";
+}
+
+export function isDepartmentLockedForRole(role: "owner" | "officer"): boolean {
+  return role === "officer";
+}
+
+export function canAccessM07Admin(role: "owner" | "officer"): boolean {
+  return role === "owner";
+}
+
+export function resolveEffectiveDepartmentForUser(
+  requestedDept: DepartmentId,
+  user: { role: "owner" | "officer"; department_id: DepartmentId },
+): DepartmentId {
+  if (user.role === "officer") {
+    return user.department_id;
+  }
+  return requestedDept;
+}
+
+export function resolvePostActorSwitchTarget(
+  pathname: string,
+  currentSearch: string,
+  nextUser: { role: "owner" | "officer"; department_id: DepartmentId },
+): string {
+  const params = new URLSearchParams(currentSearch);
+  if (nextUser.role === "officer") {
+    if (pathname === "/quan-tri-he-thong") {
+      return `/?dept=${nextUser.department_id}`;
+    }
+    params.set("dept", nextUser.department_id);
+    params.delete("filterDept");
+    return `${pathname}?${params.toString()}`;
+  }
+  if (!params.get("dept")) {
+    params.set("dept", nextUser.department_id);
+  }
+  return `${pathname}?${params.toString()}`;
+}
+
+export function resolveDefaultM06FilterDept(
+  activeUrlDept: DepartmentId,
+  rawFilterDept: string | null | undefined,
+  role: "owner" | "officer",
+): DepartmentId | "ALL" {
+  if (role === "officer") {
+    return activeUrlDept;
+  }
+  const upper = (rawFilterDept ?? "").trim().toUpperCase();
+  if (upper === "ALL") return "ALL";
+  if (upper === "VP" || upper === "KT" || upper === "VHXH" || upper === "NNMT") {
+    return upper;
+  }
+  return activeUrlDept;
+}
+
 export function formatTaskStatusLabel(status: TaskStatus): string {
   switch (status) {
     case "cho_xu_ly":
@@ -52,4 +115,3 @@ export function formatPriorityLabel(priority: TaskItem["priority"]): string {
       return "Khẩn";
   }
 }
-
