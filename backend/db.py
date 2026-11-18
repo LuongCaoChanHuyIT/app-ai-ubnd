@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent / "data" / "ubnd_ai.db"
 
@@ -21,13 +22,17 @@ def get_db_path() -> Path:
     return DEFAULT_DB_PATH
 
 
-def get_conn(db_path: Path | str | None = None) -> sqlite3.Connection:
+@contextlib.contextmanager
+def get_conn(db_path: Path | str | None = None) -> Iterator[sqlite3.Connection]:
     resolved = Path(db_path).resolve() if db_path else get_db_path()
     resolved.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(resolved), timeout=15.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 SCHEMA_SQL = """
