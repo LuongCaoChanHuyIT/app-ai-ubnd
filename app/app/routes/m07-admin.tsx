@@ -44,6 +44,7 @@ import {
   normalizeAdminTab,
   type AdminTabId,
 } from "~/lib/m06-m07-helpers";
+import { cn } from "~/lib/utils";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
