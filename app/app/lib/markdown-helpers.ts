@@ -6,10 +6,20 @@ export interface InlineSpan {
 }
 
 export interface MarkdownBlock {
-  type: "heading" | "bullet" | "ordered" | "paragraph" | "table" | "blockquote" | "hr";
+  type:
+    | "heading"
+    | "bullet"
+    | "ordered"
+    | "paragraph"
+    | "table"
+    | "blockquote"
+    | "codeblock"
+    | "hr";
   level?: 1 | 2 | 3 | 4;
   indentLevel?: number;
   orderLabel?: string;
+  language?: string;
+  codeText?: string;
   spans: InlineSpan[];
   headers?: InlineSpan[][];
   rows?: InlineSpan[][][];
@@ -28,9 +38,30 @@ export function formatAssistantModeBadge(mode: string): string {
   }
 }
 
+function parseNestedCodeSpans(
+  segment: string,
+  style: { bold?: boolean; italic?: boolean },
+): InlineSpan[] {
+  const out: InlineSpan[] = [];
+  const codeRegex = /`([^`\n]+)`/g;
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+  while ((m = codeRegex.exec(segment)) !== null) {
+    if (m.index > lastIdx) {
+      out.push({ text: segment.slice(lastIdx, m.index), ...style });
+    }
+    out.push({ text: m[1], code: true, ...style });
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < segment.length) {
+    out.push({ text: segment.slice(lastIdx), ...style });
+  }
+  return out.length > 0 ? out : [{ text: segment, ...style }];
+}
+
 export function parseInlineSpans(line: string): InlineSpan[] {
   const spans: InlineSpan[] = [];
-  const tokenRegex = /(`[^`\n]+`|\*\*[^*]+\*\*|\*[^*\n]+\*)/g;
+  const tokenRegex = /(\*\*(?:`[^`\n]+`|[^*])+\*\*|\*(?:`[^`\n]+`|[^*\n])+\*|`[^`\n]+`)/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -42,9 +73,9 @@ export function parseInlineSpans(line: string): InlineSpan[] {
     if (token.startsWith("`") && token.endsWith("`")) {
       spans.push({ text: token.slice(1, -1), code: true });
     } else if (token.startsWith("**") && token.endsWith("**")) {
-      spans.push({ text: token.slice(2, -2), bold: true });
+      spans.push(...parseNestedCodeSpans(token.slice(2, -2), { bold: true }));
     } else if (token.startsWith("*") && token.endsWith("*")) {
-      spans.push({ text: token.slice(1, -1), italic: true });
+      spans.push(...parseNestedCodeSpans(token.slice(1, -1), { italic: true }));
     }
     lastIndex = match.index + token.length;
   }
@@ -93,6 +124,30 @@ export function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
     const trimmed = raw.trim();
     if (!trimmed) {
       idx += 1;
+      continue;
+    }
+
+    // Fenced code block (```lang ... ```)
+    const fenceMatch = /^```([A-Za-z0-9_-]*)\s*$/.exec(trimmed);
+    if (fenceMatch) {
+      const language = fenceMatch[1] || "text";
+      const codeLines: string[] = [];
+      idx += 1;
+      while (idx < rawLines.length) {
+        const currentLine = rawLines[idx] ?? "";
+        if (/^```\s*$/.test(currentLine.trim())) {
+          idx += 1;
+          break;
+        }
+        codeLines.push(currentLine);
+        idx += 1;
+      }
+      blocks.push({
+        type: "codeblock",
+        language,
+        codeText: codeLines.join("\n"),
+        spans: [],
+      });
       continue;
     }
 

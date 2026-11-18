@@ -65,3 +65,30 @@ test("parseMarkdownBlocks parses nested bullet/numbered lists and callout blockq
   assert.equal(blocks[5].type, "blockquote");
   assert.ok(blocks[5].spans.some((s) => s.bold && s.text === "Lưu ý:"));
 });
+
+test("parseMarkdownBlocks parses fenced code blocks without leaking triple backticks and preserves nested code inside bold", () => {
+  const md = [
+    "### Dự thảo soạn thảo nhanh",
+    "```text",
+    "ỦY BAN NHÂN DÂN          CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM",
+    "XÃ, PHƯỜNG TRUNG TÂM           Độc lập - Tự do - Hạnh phúc",
+    "```",
+    "- ⚠️ Phát hiện **3 trường thông tin `[SAI LỆCH - CẦN XÁC MINH]`** trong hồ sơ.",
+  ].join("\n");
+
+  const blocks = parseMarkdownBlocks(md);
+  assert.equal(blocks.length, 3);
+  assert.equal(blocks[1].type, "codeblock");
+  assert.equal(blocks[1].language, "text");
+  assert.match(blocks[1].codeText ?? "", /CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM/);
+  assert.doesNotMatch(blocks[1].codeText ?? "", /```/);
+
+  // Nested inline code inside **...** must have zero raw backticks
+  const bulletSpans = blocks[2].spans;
+  assert.ok(bulletSpans.every((s) => !s.text.includes("`")));
+  assert.ok(
+    bulletSpans.some(
+      (s) => s.code && s.bold && s.text === "[SAI LỆCH - CẦN XÁC MINH]",
+    ),
+  );
+});

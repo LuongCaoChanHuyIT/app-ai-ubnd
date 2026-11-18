@@ -7,7 +7,10 @@ function renderSpans(spans: InlineSpan[]) {
       return (
         <code
           key={i}
-          className="rounded border border-slate-200/90 bg-slate-100 px-1.5 py-0.5 font-mono text-[12px] font-medium text-blue-800"
+          className={cn(
+            "rounded border border-slate-200/90 bg-slate-100 px-1.5 py-0.5 font-mono text-[11.5px] text-blue-800 break-words",
+            sp.bold ? "font-semibold" : "font-medium",
+          )}
         >
           {sp.text}
         </code>
@@ -40,10 +43,21 @@ export function FormattedMarkdown({
 }) {
   const blocks = parseMarkdownBlocks(content);
   return (
-    <div className={cn("space-y-2 text-[13.5px] leading-relaxed", className)}>
+    <div className={cn("space-y-2 text-[13.5px] leading-relaxed min-w-0", className)}>
       {blocks.map((block, idx) => {
         if (block.type === "hr") {
           return <hr key={idx} className="my-2 border-slate-200" />;
+        }
+
+        if (block.type === "codeblock") {
+          return (
+            <pre
+              key={idx}
+              className="my-2 overflow-x-auto rounded-lg border border-slate-200 bg-white p-3.5 font-mono text-[11.5px] leading-relaxed whitespace-pre text-slate-800 shadow-2xs"
+            >
+              {block.codeText}
+            </pre>
+          );
         }
 
         if (block.type === "heading") {
@@ -78,13 +92,13 @@ export function FormattedMarkdown({
               key={idx}
               className="my-2 overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-2xs"
             >
-              <table className="w-full border-collapse text-left text-xs sm:text-[13px]">
+              <table className="w-full border-collapse text-left text-xs">
                 <thead className="border-b border-slate-200 bg-slate-100/90 text-slate-800">
                   <tr>
                     {block.headers.map((cellSpans, hIdx) => (
                       <th
                         key={hIdx}
-                        className="border-r border-slate-200 px-3 py-2 font-semibold whitespace-nowrap last:border-r-0"
+                        className="border-r border-slate-200 px-2.5 py-2 font-semibold whitespace-normal break-words last:border-r-0"
                       >
                         {renderSpans(cellSpans)}
                       </th>
@@ -97,7 +111,7 @@ export function FormattedMarkdown({
                       {row.map((cellSpans, cIdx) => (
                         <td
                           key={cIdx}
-                          className="border-r border-slate-100 px-3 py-2 align-top text-slate-700 last:border-r-0"
+                          className="border-r border-slate-100 px-2.5 py-2 align-top text-slate-700 whitespace-normal break-words last:border-r-0"
                         >
                           {renderSpans(cellSpans)}
                         </td>
@@ -131,7 +145,7 @@ export function FormattedMarkdown({
                   indent >= 2 && "h-1.5 w-1.5 bg-slate-400",
                 )}
               />
-              <div className="min-w-0 flex-1">{renderSpans(block.spans)}</div>
+              <div className="min-w-0 flex-1 break-words">{renderSpans(block.spans)}</div>
             </div>
           );
         }
@@ -151,13 +165,13 @@ export function FormattedMarkdown({
               <span className="shrink-0 font-semibold text-blue-700">
                 {block.orderLabel}
               </span>
-              <div className="min-w-0 flex-1">{renderSpans(block.spans)}</div>
+              <div className="min-w-0 flex-1 break-words">{renderSpans(block.spans)}</div>
             </div>
           );
         }
 
         return (
-          <p key={idx} className="leading-relaxed">
+          <p key={idx} className="leading-relaxed break-words">
             {renderSpans(block.spans)}
           </p>
         );

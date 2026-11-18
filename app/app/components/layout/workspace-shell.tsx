@@ -69,7 +69,7 @@ interface NavItemConfig {
 }
 
 const NAV_ITEMS: NavItemConfig[] = [
-  { id: "m01", label: "+ Tư vấn công việc", pathname: "/", icon: Plus, group: "core" },
+  { id: "m01", label: "Tư vấn công việc", pathname: "/", icon: Plus, group: "core" },
   {
     id: "m02",
     label: "AI hỗ trợ kiến thức mở rộng",
@@ -348,7 +348,7 @@ export function WorkspaceShell({
           <div className="flex items-center justify-between gap-1.5">
             <span className="inline-flex items-center gap-1 text-[10.5px] font-medium text-slate-300 truncate">
               <Building2 className="h-3 w-3 text-blue-400 shrink-0" />
-              {isClonedTenant ? `Bản độc lập (${activeTenantSlug})` : "Đơn vị gốc (default)"}
+              {isClonedTenant ? `Bản độc lập (${activeTenantSlug})` : "Đơn vị gốc (Mặc định)"}
             </span>
             {isClonedTenant && showM07Admin && (
               <button

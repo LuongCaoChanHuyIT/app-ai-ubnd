@@ -390,7 +390,7 @@ export default function Module05DocSessionRoute() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 2xl:grid-cols-4 gap-2">
               {SESSION_PROCESS_TABS.map((tab) => (
                 <Button
                   key={tab.id}
@@ -401,12 +401,12 @@ export default function Module05DocSessionRoute() {
                   onClick={() => void handleRunProcess(tab.id)}
                   className={
                     activeAction === tab.id
-                      ? "bg-blue-600 hover:bg-blue-700 text-white text-xs"
-                      : "text-xs"
+                      ? "bg-blue-600 hover:bg-blue-700 text-white text-xs h-auto py-2 whitespace-normal"
+                      : "text-xs h-auto py-2 whitespace-normal"
                   }
                 >
                   <Sparkles className="h-3 w-3 mr-1 shrink-0" />
-                  <span className="truncate">{tab.label}</span>
+                  <span>{tab.label}</span>
                 </Button>
               ))}
             </div>

@@ -285,6 +285,29 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
     }
   }
 
+  async function handleTogglePrivateRepo(userId: number, nextAccess: boolean) {
+    setBusy(true);
+    setBanner(null);
+    try {
+      await apiRequest(`/api/m07/users/${userId}`, {
+        method: "PATCH",
+        body: { private_repo_access: nextAccess },
+      });
+      setBanner({
+        tone: "ok",
+        text: `Đã cập nhật quyền Kho dữ liệu riêng thành '${nextAccess ? "Được phép" : "Giới hạn"}'.`,
+      });
+      revalidator.revalidate();
+    } catch (err) {
+      setBanner({
+        tone: "err",
+        text: err instanceof Error ? err.message : "Không thể cập nhật quyền Kho riêng",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDeleteUser(userId: number) {
     setBusy(true);
     setBanner(null);
@@ -594,7 +617,26 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                           </Badge>
                         </TableCell>
                         <TableCell className="text-xs whitespace-nowrap">
-                          {u.private_repo_access ? "Được phép" : "Giới hạn"}
+                          {u.role === "owner" ? (
+                            <span className="font-medium text-emerald-700">Toàn quyền</span>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                void handleTogglePrivateRepo(u.id, !u.private_repo_access)
+                              }
+                              title="Bấm để bật/tắt quyền truy cập Kho dữ liệu riêng của phòng"
+                              className={cn(
+                                "inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors",
+                                u.private_repo_access
+                                  ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                                  : "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100",
+                              )}
+                            >
+                              {u.private_repo_access ? "Được phép" : "Giới hạn"}
+                            </button>
+                          )}
                         </TableCell>
                         <TableCell className="whitespace-nowrap">
                           <Badge
@@ -614,6 +656,8 @@ export default function Module07AdminRoute({ loaderData }: Route.ComponentProps)
                               variant="ghost"
                               size="sm"
                               disabled={busy}
+                              aria-label={`Thu hồi tài khoản ${u.email}`}
+                              title={`Thu hồi tài khoản ${u.email}`}
                               onClick={() => void handleDeleteUser(u.id)}
                               className="h-7 px-2 text-rose-600 hover:text-rose-700"
                             >

@@ -185,24 +185,24 @@ export default function Module02ExtendedRoute() {
                 key={opt.code}
                 className={
                   idx === 2
-                    ? "border-indigo-400 ring-1 ring-indigo-400/30 flex flex-col"
-                    : "border-slate-200 flex flex-col"
+                    ? "border-indigo-400 ring-1 ring-indigo-400/30 flex flex-col min-w-0"
+                    : "border-slate-200 flex flex-col min-w-0"
                 }
               >
-                <CardHeader className="pb-3 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <Badge className="bg-indigo-600 text-white">{opt.code}</Badge>
+                <CardHeader className="pb-3 space-y-2 min-w-0">
+                  <div className="flex flex-wrap items-start justify-between gap-1.5 min-w-0">
+                    <Badge className="bg-indigo-600 text-white shrink-0">{opt.code}</Badge>
                     <Badge
                       variant="outline"
-                      className="text-[11px] border-emerald-300 text-emerald-700 bg-emerald-50"
+                      className="text-[11px] border-emerald-300 text-emerald-700 bg-emerald-50 whitespace-normal break-words text-left leading-snug h-auto py-0.5 max-w-full"
                     >
                       {opt.feasibility}
                     </Badge>
                   </div>
-                  <CardTitle className="text-base leading-snug">
+                  <CardTitle className="text-base leading-snug break-words">
                     {opt.title}
                   </CardTitle>
-                  <div className="text-xs text-slate-600">
+                  <div className="text-xs text-slate-600 min-w-0">
                     <FormattedMarkdown
                       content={opt.summary}
                       className="text-xs text-slate-600"
