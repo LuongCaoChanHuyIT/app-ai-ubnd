@@ -97,8 +97,15 @@ class DeployArtifactsTests(unittest.TestCase):
         )
         self.assertEqual(default_dry.returncode, 0, msg=default_dry.stderr)
         self.assertIn("root@157.66.219.248", default_dry.stdout)
+        self.assertIn("18000", default_dry.stdout)
+        self.assertIn("13000", default_dry.stdout)
+        self.assertIn("8088", default_dry.stdout)
         self.assertIn("--exclude=backend/data", default_dry.stdout)
         self.assertIn("/var/lib/ubnd-ai", default_dry.stdout)
+
+        # Ensure script NEVER deletes existing /etc/nginx/sites-enabled/default of another app
+        script_src = deploy_script.read_text(encoding="utf-8")
+        self.assertNotIn("rm -f /etc/nginx/sites-enabled/default", script_src)
 
         # 4. Custom DOMAIN=ai.ubnd.vn dry-run
         custom_dry = subprocess.run(

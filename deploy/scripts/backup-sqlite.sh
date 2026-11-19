@@ -34,3 +34,4 @@ PY
 
 find "${BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d -mtime +"${RETENTION_DAYS}" -exec rm -rf {} +
 echo "[backup-sqlite] Completed online backup -> ${DEST_DIR}"
+
