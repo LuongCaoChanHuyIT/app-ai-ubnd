@@ -1,0 +1,17 @@
+[Unit]
+Description=UBND AI Support - FastAPI Backend (:8000)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ubnd-ai
+Environment="UBND_ENV=production"
+Environment="UBND_DB_PATH=/var/lib/ubnd-ai/ubnd_ai.db"
+EnvironmentFile=-/etc/default/ubnd-ai
+# Mandatory --workers 1 so EphemeralSessionStore RAM & SQLite write locks stay consistent
+ExecStart=/opt/ubnd-ai/.venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
