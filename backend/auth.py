@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,14 +66,28 @@ def get_actor(
     request: Request,
     x_actor_email: str = Header(default=""),
     x_tenant_slug: str = Header(default=""),
+    cf_access_authenticated_user_email: str = Header(default=""),
 ) -> ActorContext:
     tenant_slug, db_path, commune_name = resolve_tenant_from_request(
         request, x_tenant_slug
     )
-    raw_email = (
-        x_actor_email.strip()
-        or unquote(request.cookies.get("ubnd_actor_email", "")).strip()
-    ).lower()
+    trust_cf = os.environ.get("UBND_TRUST_CF_ACCESS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if trust_cf:
+        raw_email = cf_access_authenticated_user_email.strip().lower()
+        if not raw_email:
+            raise HTTPException(
+                status_code=401,
+                detail="Yêu cầu xác thực qua cổng Cloudflare Zero Trust Access hợp lệ.",
+            )
+    else:
+        raw_email = (
+            x_actor_email.strip()
+            or unquote(request.cookies.get("ubnd_actor_email", "")).strip()
+        ).lower()
 
     if not raw_email:
         raise HTTPException(
