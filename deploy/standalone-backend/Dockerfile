@@ -22,3 +22,4 @@ EXPOSE 8000
 
 # Mandatory --workers 1 so EphemeralSessionStore RAM & SQLite write locks stay consistent
 CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --proxy-headers"]
+

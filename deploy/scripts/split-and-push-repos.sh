@@ -46,6 +46,16 @@ if [[ "${VISIBILITY}" != "--private" && "${VISIBILITY}" != "--public" ]]; then
   exit 2
 fi
 
+if [[ "${FRONTEND_REPO}" == "app-ai-ubnd" || "${BACKEND_REPO}" == "app-ai-ubnd" ]]; then
+  echo "[split-repos] Không được ghi đè lên repo dự phòng app-ai-ubnd!" >&2
+  exit 2
+fi
+
+if [[ "${FRONTEND_REPO}" == "${BACKEND_REPO}" ]]; then
+  echo "[split-repos] FRONTEND_REPO và BACKEND_REPO phải khác tên nhau!" >&2
+  exit 2
+fi
+
 FE_REMOTE="https://github.com/${GITHUB_OWNER}/${FRONTEND_REPO}.git"
 BE_REMOTE="https://github.com/${GITHUB_OWNER}/${BACKEND_REPO}.git"
 
@@ -68,7 +78,10 @@ stage_repositories() {
 
   # 1. Stage standalone Backend tree
   rsync -a --delete \
+    --include=".env.example" \
     --exclude=".git" \
+    --exclude=".venv" \
+    --exclude=".env*" \
     --exclude="__pycache__" \
     --exclude="*.pyc" \
     --exclude="*.pyo" \
@@ -94,12 +107,14 @@ stage_repositories() {
 
   # 2. Stage standalone Frontend tree (app/* directly at repo root)
   rsync -a --delete \
+    --include=".env.example" \
     --exclude=".git" \
+    --exclude=".venv" \
+    --exclude=".env*" \
     --exclude="node_modules" \
     --exclude="build" \
     --exclude=".react-router" \
     --exclude=".agents" \
-    --exclude=".env" \
     --exclude="*.db" \
     "${REPO_ROOT}/app/" "${fe_out}/"
 }
@@ -179,3 +194,4 @@ publish_standalone_repo \
 echo "🎉 Hoàn tất tách & đẩy 2 repo độc lập:"
 echo "  - Backend : https://github.com/${GITHUB_OWNER}/${BACKEND_REPO}"
 echo "  - Frontend: https://github.com/${GITHUB_OWNER}/${FRONTEND_REPO}"
+

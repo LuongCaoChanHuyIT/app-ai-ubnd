@@ -48,3 +48,4 @@ UBND_DATA_DIR=/var/lib/ubnd-ai UBND_BACKUP_DIR=/var/backups/ubnd-ai bash deploy/
 ```bash
 .venv/bin/python -m unittest discover -s backend/tests -v
 ```
+

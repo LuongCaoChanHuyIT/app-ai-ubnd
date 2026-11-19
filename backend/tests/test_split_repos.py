@@ -133,6 +133,57 @@ class SplitReposTests(unittest.TestCase):
             if created_dummy and dummy_db.exists():
                 dummy_db.unlink()
 
+    def test_frontend_dockerignore_and_gitignore_exclude_env_secrets_and_git(self) -> None:
+        dockerignore = (REPO_ROOT / "app" / ".dockerignore").read_text(encoding="utf-8")
+        self.assertIn(".git", dockerignore)
+        self.assertIn(".env", dockerignore)
+        self.assertIn(".env.*", dockerignore)
+        self.assertIn("!.env.example", dockerignore)
+
+        gitignore = (REPO_ROOT / "app" / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn(".env.*", gitignore)
+        self.assertIn("!.env.example", gitignore)
+
+    def test_split_script_blocks_backup_repo_collision_and_strips_env_and_venv_leaks(self) -> None:
+        script_path = REPO_ROOT / "deploy" / "scripts" / "split-and-push-repos.sh"
+
+        for bad_env in (
+            {"FRONTEND_REPO": "app-ai-ubnd"},
+            {"BACKEND_REPO": "app-ai-ubnd"},
+            {"FRONTEND_REPO": "same-repo", "BACKEND_REPO": "same-repo"},
+        ):
+            res = subprocess.run(
+                ["bash", str(script_path), "--dry-run"],
+                env={**os.environ, **bad_env},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(res.returncode, 0, msg=f"Should reject {bad_env}")
+
+        fe_env_local = REPO_ROOT / "app" / ".env.local.leaktest"
+        be_env_local = REPO_ROOT / "backend" / ".env.local.leaktest"
+        fe_env_local.write_text("VITE_SECRET=leak\n", encoding="utf-8")
+        be_env_local.write_text("SECRET=leak\n", encoding="utf-8")
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out_dir = Path(tmp) / "exported"
+                res = subprocess.run(
+                    ["bash", str(script_path), "--export-only", str(out_dir)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(res.returncode, 0, msg=res.stderr)
+                self.assertFalse((out_dir / "ubnd-ai-frontend" / ".env.local.leaktest").exists())
+                self.assertTrue((out_dir / "ubnd-ai-frontend" / ".env.example").is_file())
+                self.assertFalse((out_dir / "ubnd-ai-backend" / "backend" / ".env.local.leaktest").exists())
+                self.assertTrue((out_dir / "ubnd-ai-backend" / ".env.example").is_file())
+        finally:
+            fe_env_local.unlink(missing_ok=True)
+            be_env_local.unlink(missing_ok=True)
+
 
 if __name__ == "__main__":
     unittest.main()
+
