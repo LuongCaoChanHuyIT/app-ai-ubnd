@@ -94,3 +94,4 @@
 - [ ] **Step 4: Run full Backend + Frontend test & build suites to verify GREEN & Commit**
   Run: `.venv/bin/python -m unittest discover -s backend/tests -v && (cd app && npm test && npm run typecheck && npm run build)`
   Expected: 100% PASS.
+

@@ -64,9 +64,12 @@ class DeployArtifactsTests(unittest.TestCase):
             self.assertTrue((snap_dir / "ubnd_ai.db").exists())
             self.assertTrue((snap_dir / "tenants" / "ubnd-phuong-da-kao.db").exists())
 
-            with sqlite3.connect(snap_dir / "tenants" / "ubnd-phuong-da-kao.db") as c:
+            c = sqlite3.connect(snap_dir / "tenants" / "ubnd-phuong-da-kao.db")
+            try:
                 val = c.execute("SELECT value FROM tenant_meta WHERE key='commune_name'").fetchone()[0]
                 self.assertEqual(val, "UBND Phường Đa Kao")
+            finally:
+                c.close()
 
     def test_deploy_vps_script_syntax_validation_and_dry_run(self) -> None:
         deploy_script = REPO_ROOT / "deploy" / "scripts" / "deploy-vps.sh"
