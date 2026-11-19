@@ -20,3 +20,7 @@ app/build/
 dist/
 
 .ua/
+
+# Standalone split local repositories
+/ubnd-ai-frontend/
+/ubnd-ai-backend/
