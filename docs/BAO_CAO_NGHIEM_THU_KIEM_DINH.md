@@ -42,3 +42,4 @@
 4. **`FINDING-M03-02` (`backend/services/nd30_engine.py` — Đã đóng):** Lược bỏ dấu phẩy thừa cuối dòng `Kính gửi:` đơn lẻ trên `Công văn` và `Tờ trình`.
 5. **`FINDING-M07-01` (`backend/routers/ops_and_admin.py` — Đã đóng):** Đổi `storage_label` từ `tenants/<slug>.db` sang định danh logic `isolated-tenant://<slug>`, ẩn tuyệt đối đuôi tệp `.db`.
 6. **`FINDING-M04-01 & 02` (`app/app/routes/m04-official-docs.tsx` — Đã đóng):** Ẩn nút thêm văn bản đối với cán bộ bị giới hạn Kho riêng và tự động mở hộp thoại toàn văn khi điều hướng từ thẻ trích dẫn `M01 → M04` khớp duy nhất 01 văn bản.
+
