@@ -68,6 +68,49 @@ class DeployArtifactsTests(unittest.TestCase):
                 val = c.execute("SELECT value FROM tenant_meta WHERE key='commune_name'").fetchone()[0]
                 self.assertEqual(val, "UBND Phường Đa Kao")
 
+    def test_deploy_vps_script_syntax_validation_and_dry_run(self) -> None:
+        deploy_script = REPO_ROOT / "deploy" / "scripts" / "deploy-vps.sh"
+        self.assertTrue(deploy_script.exists(), "deploy-vps.sh must exist")
+
+        # 1. Bash syntax check
+        syntax = subprocess.run(["bash", "-n", str(deploy_script)], capture_output=True, text=True, check=False)
+        self.assertEqual(syntax.returncode, 0, msg=syntax.stderr)
+
+        # 2. Reject invalid DOMAIN containing slash or whitespace
+        bad_domain = subprocess.run(
+            ["bash", str(deploy_script), "--dry-run"],
+            env={**os.environ, "DOMAIN": "bad/domain name"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(bad_domain.returncode, 0)
+
+        # 3. Default IP mode (157.66.219.248) dry-run works out-of-the-box without requiring DOMAIN env
+        clean_env = {k: v for k, v in os.environ.items() if k != "DOMAIN"}
+        default_dry = subprocess.run(
+            ["bash", str(deploy_script), "--dry-run"],
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(default_dry.returncode, 0, msg=default_dry.stderr)
+        self.assertIn("root@157.66.219.248", default_dry.stdout)
+        self.assertIn("--exclude=backend/data", default_dry.stdout)
+        self.assertIn("/var/lib/ubnd-ai", default_dry.stdout)
+
+        # 4. Custom DOMAIN=ai.ubnd.vn dry-run
+        custom_dry = subprocess.run(
+            ["bash", str(deploy_script), "--dry-run"],
+            env={**os.environ, "DOMAIN": "ai.ubnd.vn"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(custom_dry.returncode, 0, msg=custom_dry.stderr)
+        self.assertIn("ai.ubnd.vn", custom_dry.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
