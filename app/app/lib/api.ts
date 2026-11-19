@@ -263,9 +263,23 @@ export class ApiError extends Error {
 export const LEGAL_DISCLAIMER_TEXT =
   "AI là công cụ hỗ trợ nghiệp vụ; cán bộ, công chức và người có thẩm quyền vẫn trực tiếp kiểm tra, quyết định và chịu trách nhiệm đối với nội dung sử dụng.";
 
+export function resolveClientApiBase(): string {
+  const viteBase = (
+    import.meta as { env?: Record<string, string | undefined> }
+  )?.env?.VITE_API_BASE_URL;
+  const raw =
+    viteBase ??
+    (typeof process !== "undefined" ? process.env?.VITE_API_BASE_URL : undefined) ??
+    "";
+  return raw.trim().replace(/\/+$/, "");
+}
+
 export function resolveServerApiBase(): string {
-  if (typeof process !== "undefined" && process.env?.API_BASE_URL) {
-    return process.env.API_BASE_URL.replace(/\/+$/, "");
+  if (typeof process !== "undefined") {
+    const raw = process.env?.API_BASE_URL || process.env?.VITE_API_BASE_URL;
+    if (raw && raw.trim()) {
+      return raw.trim().replace(/\/+$/, "");
+    }
   }
   return "http://127.0.0.1:8000";
 }
@@ -334,7 +348,9 @@ export async function apiRequest<T>(
     headers?: Record<string, string>;
   },
 ): Promise<T> {
-  const baseUrl = (options?.baseUrl ?? "").replace(/\/+$/, "");
+  const baseUrl = (options?.baseUrl ?? resolveClientApiBase())
+    .trim()
+    .replace(/\/+$/, "");
   const headers: Record<string, string> = {
     Accept: "application/json",
     ...(options?.headers ?? {}),
@@ -385,12 +401,14 @@ export async function uploadSessionFile(
   departmentId: DepartmentId = "VP",
   actorEmail?: string,
   tenantSlug?: string,
-  baseUrl = "",
+  baseUrl?: string,
 ): Promise<SessionState> {
   const form = new FormData();
   form.append("file", file);
 
-  const resolvedBase = baseUrl.replace(/\/+$/, "");
+  const resolvedBase = (baseUrl ?? resolveClientApiBase())
+    .trim()
+    .replace(/\/+$/, "");
   const resolvedActor =
     actorEmail ??
     (typeof window !== "undefined" ? getActiveActorEmail() : "tsh.co@tshorg.vn");
@@ -451,7 +469,9 @@ export async function fetchBackendHello(options?: {
   baseUrl?: string;
   name?: string;
 }): Promise<HelloResult> {
-  const baseUrl = (options?.baseUrl ?? "").replace(/\/+$/, "");
+  const baseUrl = (options?.baseUrl ?? resolveClientApiBase())
+    .trim()
+    .replace(/\/+$/, "");
   const query = options?.name?.trim()
     ? `?name=${encodeURIComponent(options.name.trim())}`
     : "";

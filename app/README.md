@@ -1,87 +1,58 @@
-# Welcome to React Router!
+# Bộ Trợ lý AI UBND Xã, Phường — Frontend (`ubnd-ai-frontend`)
 
-A modern, production-ready template for building full-stack React applications using React Router.
+Ứng dụng giao diện 7 phân hệ nghiệp vụ UBND cấp xã, phường xây dựng trên **React Router v8.5 SSR**, **React 19**, **TypeScript** và **Tailwind CSS v4**.
 
-[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/github/remix-run/react-router-templates/tree/main/default)
+## Yêu cầu môi trường
 
-## Features
+- Node.js `22+`
+- Kết nối tới dịch vụ Backend FastAPI (`ubnd-ai-backend`)
 
-- 🚀 Server-side rendering
-- ⚡️ Hot Module Replacement (HMR)
-- 📦 Asset bundling and optimization
-- 🔄 Data loading and mutations
-- 🔒 TypeScript by default
-- 🎉 TailwindCSS for styling
-- 📖 [React Router docs](https://reactrouter.com/)
-
-## Getting Started
-
-### Installation
-
-Install the dependencies:
+## Cài đặt & Chạy môi trường phát triển
 
 ```bash
-npm install
-```
-
-### Development
-
-Start the development server with HMR:
-
-```bash
+cp .env.example .env
+npm ci
 npm run dev
 ```
 
-Your application will be available at `http://localhost:5173`.
+Mặc định trình duyệt chạy tại `http://localhost:5173` và proxy `/api` về `http://127.0.0.1:8000`.
 
-## Building for Production
+## Biến môi trường khi Deploy
 
-Create a production build:
+| Biến | Vai trò | Ví dụ |
+| :--- | :--- | :--- |
+| `PORT` | Cổng lắng nghe của tiến trình SSR | `3000` |
+| `API_BASE_URL` | Địa chỉ Backend để SSR server gọi trực tiếp | `http://127.0.0.1:8000` hoặc `https://api.tenmien.vn` |
+| `VITE_API_BASE_URL` | Địa chỉ Backend để trình duyệt gọi khi Frontend & Backend **khác domain/port** (cài lúc `npm run build`). Để rỗng nếu chạy chung sau Nginx cùng domain | `https://api.tenmien.vn` hoặc `""` |
 
-```bash
-npm run build
-```
-
-## Deployment
-
-### Docker Deployment
-
-To build and run using Docker:
+## Build & Chạy Production (Node.js trực tiếp)
 
 ```bash
-docker build -t my-app .
+VITE_API_BASE_URL=https://api.tenmien.vn npm ci
+VITE_API_BASE_URL=https://api.tenmien.vn npm run build
 
-# Run the container
-docker run -p 3000:3000 my-app
+NODE_ENV=production PORT=3000 API_BASE_URL=https://api.tenmien.vn npm run start
 ```
 
-The containerized application can be deployed to any platform that supports Docker, including:
+## Deploy bằng Docker
 
-- AWS ECS
-- Google Cloud Run
-- Azure Container Apps
-- Digital Ocean App Platform
-- Fly.io
-- Railway
+```bash
+docker build \
+  --build-arg VITE_API_BASE_URL=https://api.tenmien.vn \
+  -t ubnd-ai-frontend .
 
-### DIY Deployment
-
-If you're familiar with deploying Node applications, the built-in app server is production-ready.
-
-Make sure to deploy the output of `npm run build`
-
-```
-├── package.json
-├── package-lock.json (or pnpm-lock.yaml, or bun.lockb)
-├── build/
-│   ├── client/    # Static assets
-│   └── server/    # Server-side code
+docker run -d \
+  --name ubnd-ai-frontend \
+  -p 3000:3000 \
+  -e NODE_ENV=production \
+  -e PORT=3000 \
+  -e API_BASE_URL=https://api.tenmien.vn \
+  ubnd-ai-frontend
 ```
 
-## Styling
+## Kiểm thử
 
-This template comes with [Tailwind CSS](https://tailwindcss.com/) already configured for a simple default starting experience. You can use whatever CSS framework you prefer.
-
----
-
-Built with ❤️ using React Router.
+```bash
+npm test
+npm run typecheck
+```

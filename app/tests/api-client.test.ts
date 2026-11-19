@@ -6,6 +6,8 @@ import {
   apiRequest,
   extractServerAuthHeaders,
   formatHttpErrorMessage,
+  resolveClientApiBase,
+  resolveServerApiBase,
   uploadSessionFile,
 } from "../app/lib/api.ts";
 import {
@@ -278,4 +280,57 @@ test("session manager rotates session ID cleanly on wipe", () => {
   const second = mgr.rotateSessionId();
   assert.notEqual(first, second);
   assert.equal(mgr.getOrInitSessionId(), second);
+});
+
+test("resolveClientApiBase & resolveServerApiBase handle env precedence, Node runtime safety, and trailing slashes", () => {
+  const prevApi = process.env.API_BASE_URL;
+  const prevVite = process.env.VITE_API_BASE_URL;
+  try {
+    delete process.env.API_BASE_URL;
+    delete process.env.VITE_API_BASE_URL;
+    assert.equal(resolveClientApiBase(), "");
+    assert.equal(resolveServerApiBase(), "http://127.0.0.1:8000");
+
+    process.env.VITE_API_BASE_URL = " https://api.ubnd.vn/// ";
+    assert.equal(resolveClientApiBase(), "https://api.ubnd.vn");
+    assert.equal(resolveServerApiBase(), "https://api.ubnd.vn");
+
+    process.env.API_BASE_URL = "http://127.0.0.1:18000/";
+    assert.equal(resolveServerApiBase(), "http://127.0.0.1:18000");
+  } finally {
+    if (prevApi === undefined) delete process.env.API_BASE_URL;
+    else process.env.API_BASE_URL = prevApi;
+    if (prevVite === undefined) delete process.env.VITE_API_BASE_URL;
+    else process.env.VITE_API_BASE_URL = prevVite;
+  }
+});
+
+test("apiRequest and uploadSessionFile default to VITE_API_BASE_URL when baseUrl is omitted", async () => {
+  const receivedPaths: string[] = [];
+  const server = http.createServer((req, res) => {
+    receivedPaths.push(String(req.url ?? ""));
+    req.resume();
+    req.on("end", () => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ session_id: "s1", created_at: "", files: [], messages: [] }));
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as { port: number }).port;
+  const prevVite = process.env.VITE_API_BASE_URL;
+  process.env.VITE_API_BASE_URL = `http://127.0.0.1:${port}///`;
+
+  try {
+    await apiRequest("/api/health");
+    const blob = new File([Buffer.from("noi dung")], "hoso.txt", { type: "text/plain" });
+    await uploadSessionFile("s1", blob, "VP", "tsh.co@tshorg.vn", "default");
+    assert.deepEqual(receivedPaths, [
+      "/api/health",
+      "/api/m05/sessions/s1/upload?department_id=VP",
+    ]);
+  } finally {
+    if (prevVite === undefined) delete process.env.VITE_API_BASE_URL;
+    else process.env.VITE_API_BASE_URL = prevVite;
+    server.close();
+  }
 });
